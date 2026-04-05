@@ -1,3 +1,4 @@
+# version 1.0.1 – async fixed
 import logging
 import json
 import os
