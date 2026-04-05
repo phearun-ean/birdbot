@@ -237,15 +237,16 @@ async def clear_old_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 from flask import Flask
 import threading
 
-# Create a Flask app for Gunicorn – name it "app" so Render finds it
-app = Flask(__name__)
+# Create a Flask app for Gunicorn – name it "flask_app" to match Render's command
+flask_app = Flask(__name__)
 
-@app.route('/')
+@flask_app.route('/')
 def health_check():
     return "Bot is running", 200
 
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
+    # Add all handlers (copy from your original main)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("clearorders", clear_old_orders))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
@@ -257,8 +258,6 @@ def run_bot():
     print("🤖 Bot started (polling in background thread)")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
-# Start the bot in a background daemon thread
+# Start bot in background thread
 bot_thread = threading.Thread(target=run_bot, daemon=True)
 bot_thread.start()
-
-# The Flask app will be run by Gunicorn – no need for if __name__ == "__main__"
