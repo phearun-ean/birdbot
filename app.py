@@ -234,17 +234,39 @@ async def clear_old_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         await update.message.reply_text("Unauthorized.")
 
-def main() -> None:
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("clearorders", clear_old_orders))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
-    app.add_handler(MessageHandler(filters.PHOTO, forward_reply))
-    app.add_handler(MessageHandler(filters.Sticker.ALL, forward_reply))
-    print("🤖 Bot is running...")
-    app.run_polling(allowed_updates=["message", "callback_query"])
+from flask import Flask
+import threading
 
-if __name__ == "__main__":
-    main()
+# Create a Flask app for Gunicorn
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health_check():
+    return "Bot is running", 200
+
+from flask import Flask
+import threading
+
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health_check():
+    return "Bot is running", 200
+
+def run_bot():
+    application = Application.builder().token(BOT_TOKEN).build()
+    # Add all handlers (copy from your original main)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("clearorders", clear_old_orders))
+    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
+    application.add_handler(MessageHandler(filters.PHOTO, forward_reply))
+    application.add_handler(MessageHandler(filters.Sticker.ALL, forward_reply))
+    
+    print("🤖 Bot started (polling in background thread)")
+    application.run_polling(allowed_updates=["message", "callback_query"])
+
+# Start bot in background thread
+bot_thread = threading.Thread(target=run_bot, daemon=True)
+bot_thread.start()
