@@ -14,6 +14,8 @@ SELLER_CHAT_ID = os.getenv("SELLER_CHAT_ID")
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
+
+# Build the Application but don't start polling
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 order_storage = {}
 
@@ -74,8 +76,12 @@ telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward
 # ---------- Flask Webhook ----------
 @app.route('/webhook', methods=['POST'])
 async def webhook():
+    # Initialize the application once per request (or globally, but we need to initialize)
+    # In v21, we must call initialize() before process_update
+    await telegram_app.initialize()
     update = Update.de_json(request.get_json(force=True), telegram_app.bot)
     await telegram_app.process_update(update)
+    await telegram_app.shutdown()  # optional, but good practice
     return jsonify({"ok": True})
 
 @app.route('/')
