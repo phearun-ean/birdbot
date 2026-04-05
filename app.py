@@ -1,8 +1,10 @@
 import logging
 import json
 import os
+import threading
 from datetime import datetime
 from typing import Dict, Any
+
 from telegram import (
     Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo,
     InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp
@@ -11,18 +13,22 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, CallbackQueryHandler
 )
+from flask import Flask
 from dotenv import load_dotenv
 
+# ---------- Load environment variables ----------
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SELLER_CHAT_ID = 455774531  # integer
+SELLER_CHAT_ID = 455774531          # Your numeric chat ID (integer)
 YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 
+# ---------- Logging ----------
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
+# ---------- Persistent order storage ----------
 ORDERS_FILE = "orders.json"
 
 def load_orders() -> Dict[str, Any]:
@@ -43,6 +49,7 @@ def save_orders(orders: Dict[str, Any]) -> None:
 
 order_storage = load_orders()
 
+# ---------- Bot Handlers ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     button = KeyboardButton(
         text="🍽️ Open Order menu",
@@ -234,19 +241,16 @@ async def clear_old_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         await update.message.reply_text("Unauthorized.")
 
-from flask import Flask
-import threading
-
-# Create a Flask app for Gunicorn – name it "app" so Render finds it
-app = Flask(__name__)
+# ---------- Flask web app for Render health checks ----------
+app = Flask(__name__)   # MUST be named "app" for Gunicorn
 
 @app.route('/')
-def health_check():
+def health():
     return "Bot is running", 200
 
+# ---------- Function to start the Telegram bot (polling) ----------
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
-    # Add all handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("clearorders", clear_old_orders))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
@@ -254,10 +258,12 @@ def run_bot():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
     application.add_handler(MessageHandler(filters.PHOTO, forward_reply))
     application.add_handler(MessageHandler(filters.Sticker.ALL, forward_reply))
-    
+
     print("🤖 Bot started (polling in background thread)")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
-# Start bot in background thread
+# ---------- Start the bot in a background thread (so Flask can run) ----------
 bot_thread = threading.Thread(target=run_bot, daemon=True)
 bot_thread.start()
+
+# The Flask app will be run by Gunicorn – no need for if __name__ == "__main__"
