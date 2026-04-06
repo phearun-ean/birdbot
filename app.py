@@ -25,16 +25,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.web_app_data:
+        await update.message.reply_text("No order data received.")
         return
-    data = json.loads(update.message.web_app_data.data)
-    logging.info(f"Raw order data: {data}")
-    logging.info(f"Order from {data.get('userName')}: ${data.get('total')}")
     
-    # Notify seller
-    await context.bot.send_message(
-        chat_id=SELLER_CHAT_ID,
-        text=f"🆕 New order from {data.get('userName')}!\nTotal: ${data.get('total')}\nItems: {len(data.get('items', []))}"
+    raw_data = update.message.web_app_data.data
+    logging.info(f"Raw order data: {raw_data}")
+    
+    try:
+        data = json.loads(raw_data)
+    except json.JSONDecodeError as e:
+        logging.error(f"Invalid JSON: {e}")
+        await update.message.reply_text("Error processing order.")
+        return
+    
+    # Extract fields with fallbacks
+    user_id = data.get('userId', 'Unknown')
+    user_name = data.get('userName', 'Guest')
+    total = data.get('total', '0.00')
+    items = data.get('items', [])
+    
+    # Log to console for debugging
+    logging.info(f"Order from {user_name} (ID: {user_id}): {len(items)} items, total ${total}")
+    
+    # Build a readable order summary for the seller
+    items_text = "\n".join([f"  • {item.get('name', '?')} - ${item.get('price', 0)}" for item in items])
+    order_summary = (
+        f"🆕 New order from {user_name}\n"
+        f"🆔 User ID: {user_id}\n"
+        f"📦 Items:\n{items_text}\n"
+        f"💰 Total: ${total}"
     )
+    
+    # Send to seller
+    await context.bot.send_message(chat_id=SELLER_CHAT_ID, text=order_summary)
     await update.message.reply_text("✅ Order received! We'll notify you when it's ready.")
 
 # ------------------ Bot Polling ------------------
