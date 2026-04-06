@@ -27,6 +27,7 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.web_app_data:
         return
     data = json.loads(update.message.web_app_data.data)
+    logging.info(f"Raw order data: {data}")
     logging.info(f"Order from {data.get('userName')}: ${data.get('total')}")
     
     # Notify seller
