@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any
 from telegram import (
     Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo,
-    InlineKeyboardButton, InlineKeyboardMarkup
+    InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonDefault
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -50,6 +50,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Welcome to Bird Nest House! 🥚\nClick the button below to place your order:",
         reply_markup=ReplyKeyboardMarkup([[button]], resize_keyboard=True)
     )
+
+async def reset_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove the persistent menu button (blue button at bottom)"""
+    await context.bot.set_chat_menu_button(
+        chat_id=update.effective_chat.id,
+        menu_button=MenuButtonDefault()   # removes custom button
+    )
+    await update.message.reply_text("✅ Persistent menu button removed. Please use the 'Open Order menu' keyboard button below.")
 
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.web_app_data:
@@ -225,6 +233,7 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("resetmenu", reset_menu))   # <-- added here
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
