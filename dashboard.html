@@ -131,21 +131,25 @@
     let revenueChart = null;
 
     async function loadOrders() {
-    const container = document.getElementById('ordersContainer');
-    container.innerHTML = '<div class="spinner"></div>';
-    try {
-        const response = await fetch('/api/orders');
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        const orders = await response.json();
-        console.log('Orders loaded:', orders.length);
-        allOrders = orders;
-        allOrders.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-        applyFilters();
-    } catch (error) {
-        console.error('Fetch error:', error);
-        container.innerHTML = `<p>Error loading orders: ${error.message}. Ensure the bot is running and you have placed at least one order.</p>`;
+        const container = document.getElementById('ordersContainer');
+        container.innerHTML = '<div class="spinner"></div>';
+        try {
+            const response = await fetch('/api/orders');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const orders = await response.json();
+            console.log('Orders loaded:', orders.length);
+            // Convert total to number for each order
+            orders.forEach(order => {
+                order.total = parseFloat(order.total) || 0;
+            });
+            allOrders = orders;
+            allOrders.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+            applyFilters();
+        } catch (error) {
+            console.error('Fetch error:', error);
+            container.innerHTML = `<p>Error loading orders: ${error.message}. Ensure the bot is running and you have placed at least one order.</p>`;
         }
     }
 
@@ -179,7 +183,7 @@
             div.className = 'order-card';
             div.innerHTML = `
                 <div><strong>${escapeHtml(order.user_name)}</strong> (${order.user_id})</div>
-                <div>Total: $${order.total}</div>
+                <div>Total: $${order.total.toFixed(2)}</div>
                 <div>Status: <span class="status">${order.status || 'Pending'}</span></div>
                 <div>Payment: ${order.paymentMethod || 'N/A'}</div>
                 <div>Time: ${new Date(order.timestamp).toLocaleString()}</div>
@@ -220,6 +224,7 @@
         const customerMap = new Map();
         orders.forEach(order => {
             const userId = order.user_id;
+            const total = order.total; // already a number
             if (!customerMap.has(userId)) {
                 customerMap.set(userId, {
                     name: order.user_name,
@@ -229,7 +234,7 @@
                 });
             }
             const cust = customerMap.get(userId);
-            cust.totalSpent += order.total;
+            cust.totalSpent += total;
             cust.orderCount += 1;
         });
         const customers = Array.from(customerMap.values());
