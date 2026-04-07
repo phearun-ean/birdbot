@@ -2,7 +2,6 @@ import logging
 import json
 import os
 import threading
-import asyncio
 from datetime import datetime
 from typing import Dict, Any
 from telegram import (
@@ -25,15 +24,15 @@ YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 logging.basicConfig(level=logging.INFO)
 
 # ---------- Flask app ----------
-app = Flask(__name__)
-app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
+flask_app = Flask(__name__)
+flask_app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
 ADMIN_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'change_this_password')
 
-@app.route('/')
+@flask_app.route('/')
 def health():
     return "Bot is running", 200
 
-@app.route('/dashboard', methods=['GET', 'POST'])
+@flask_app.route('/dashboard', methods=['GET', 'POST'])
 def dashboard():
     if request.method == 'POST':
         if request.form.get('password') == ADMIN_PASSWORD:
@@ -55,6 +54,10 @@ def dashboard():
             </html>
         '''
     return send_from_directory('.', 'dashboard.html')
+
+def run_flask():
+    port = int(os.environ.get('PORT', 10000))
+    flask_app.run(host='0.0.0.0', port=port, use_reloader=False, threaded=True)
 
 # ---------- Persistent order storage ----------
 ORDERS_FILE = "orders.json"
@@ -255,12 +258,8 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("⚠️ Failed to send message.")
 
-# ---------- Bot Polling (with event loop fix) ----------
+# ---------- Bot Polling (in main thread) ----------
 def run_bot():
-    # Create a new event loop for this thread
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("resetmenu", reset_menu))
@@ -273,14 +272,15 @@ def run_bot():
     print("🤖 Bot started polling...")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
-# ---------- Start both ----------
+# ---------- Start ----------
 if __name__ == "__main__":
     print("=" * 50)
     print("⚠️  IMPORTANT: Ensure webhook is deleted!")
     print("Run this command once (in terminal or Render Shell):")
     print(f"curl -X POST \"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook\"")
     print("=" * 50)
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    
+    # Run Flask in background thread, bot in main thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    run_bot()
