@@ -3,6 +3,7 @@
 <head>
     <title>Bird Nest House – Seller Dashboard</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -14,6 +15,27 @@
         }
         .container { max-width: 1200px; margin: 0 auto; }
         h1 { font-size: 1.5rem; margin-bottom: 20px; }
+        .filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        .filters input, .filters button {
+            padding: 8px 12px;
+            border-radius: 20px;
+            border: 1px solid #ddd;
+            background: var(--tg-theme-bg-color, white);
+            color: var(--tg-theme-text-color, black);
+        }
+        .filters button {
+            background: var(--tg-theme-button-color, #ff6b00);
+            color: var(--tg-theme-button-text-color, white);
+            border: none;
+            cursor: pointer;
+        }
+        canvas { margin-bottom: 20px; max-width: 100%; }
         .order-card {
             background: var(--tg-theme-secondary-bg-color, #f5f5f5);
             border-radius: 16px;
@@ -33,7 +55,7 @@
         }
         .refresh-btn {
             background: var(--tg-theme-button-color, #ff6b00);
-            color: var(--tg-theme-button-text-color, white);
+            color: white;
             border: none;
             padding: 8px 16px;
             border-radius: 20px;
@@ -54,81 +76,162 @@
 </head>
 <body>
 <div class="container">
-    <h1>📦 Orders</h1>
-    <button class="refresh-btn" onclick="loadOrders()">🔄 Refresh</button>
+    <h1>📦 Orders & CRM</h1>
+    <div class="filters">
+        <input type="date" id="dateFrom" placeholder="From">
+        <input type="date" id="dateTo" placeholder="To">
+        <input type="number" id="minTotal" placeholder="Min total ($)" step="1">
+        <input type="text" id="customerSearch" placeholder="Customer name">
+        <button onclick="applyFilters()">Apply Filters</button>
+        <button onclick="exportToCSV()">📥 Export CSV</button>
+        <button onclick="loadOrders()" class="refresh-btn">🔄 Refresh</button>
+    </div>
+    <canvas id="revenueChart" width="400" height="200"></canvas>
     <div id="ordersContainer"></div>
 </div>
 
 <script>
-    // Telegram WebApp integration
     const tg = window.Telegram.WebApp;
     tg.expand();
     tg.BackButton.show();
     tg.BackButton.onClick(() => tg.close());
 
-    // Password protection (same as Flask route)
     const password = prompt("Enter dashboard password:");
     if (password !== "change_this_password") {
         document.body.innerHTML = "<h2>Unauthorized</h2>";
         throw new Error("Unauthorized");
     }
 
+    let allOrders = [];
+    let revenueChart = null;
+
     async function loadOrders() {
         const container = document.getElementById('ordersContainer');
         container.innerHTML = '<div class="spinner"></div>';
         try {
             const response = await fetch('/api/orders');
-            const orders = await response.json();
-            if (orders.length === 0) {
-                container.innerHTML = '<p>No orders yet.</p>';
-                return;
-            }
-            orders.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-            container.innerHTML = '';
-            orders.forEach(order => {
-                const div = document.createElement('div');
-                div.className = 'order-card';
-                div.innerHTML = `
-                    <div><strong>${escapeHtml(order.user_name)}</strong> (${order.user_id})</div>
-                    <div>Total: $${order.total}</div>
-                    <div>Status: <span class="status">${order.status || 'Pending'}</span></div>
-                    <div>Payment: ${order.paymentMethod || 'N/A'}</div>
-                    <div>Time: ${new Date(order.timestamp).toLocaleString()}</div>
-                    <div>
-                        <button class="status-btn" data-id="${order.orderId}" data-status="Preparing">🔄 Preparing</button>
-                        <button class="status-btn" data-id="${order.orderId}" data-status="Ready">✅ Ready</button>
-                        <button class="status-btn" data-id="${order.orderId}" data-status="Completed">🏁 Completed</button>
-                    </div>
-                `;
-                container.appendChild(div);
-            });
-            // Attach event listeners for status buttons
-            document.querySelectorAll('.status-btn').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const orderId = btn.dataset.id;
-                    const newStatus = btn.dataset.status;
-                    try {
-                        const response = await fetch('/api/update-status', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ orderId: orderId, status: newStatus })
-                        });
-                        const result = await response.json();
-                        if (result.success) {
-                            tg.showAlert(`Order ${orderId} marked as ${newStatus}.`);
-                            loadOrders(); // refresh the list
-                        } else {
-                            tg.showAlert(`Failed: ${result.error}`);
-                        }
-                    } catch (error) {
-                        tg.showAlert('Error updating status');
-                    }
-                });
-            });
+            allOrders = await response.json();
+            allOrders.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+            applyFilters();
         } catch (error) {
             console.error(error);
             container.innerHTML = '<p>Error loading orders. Ensure the bot is running.</p>';
         }
+    }
+
+    function applyFilters() {
+        const dateFrom = document.getElementById('dateFrom').value;
+        const dateTo = document.getElementById('dateTo').value;
+        const minTotal = parseFloat(document.getElementById('minTotal').value) || 0;
+        const customerSearch = document.getElementById('customerSearch').value.toLowerCase();
+
+        let filtered = allOrders.filter(order => {
+            if (dateFrom && new Date(order.timestamp) < new Date(dateFrom)) return false;
+            if (dateTo && new Date(order.timestamp) > new Date(dateTo)) return false;
+            if (order.total < minTotal) return false;
+            if (customerSearch && !order.user_name.toLowerCase().includes(customerSearch)) return false;
+            return true;
+        });
+        renderOrders(filtered);
+        updateChart(filtered);
+    }
+
+    function renderOrders(orders) {
+        const container = document.getElementById('ordersContainer');
+        if (orders.length === 0) {
+            container.innerHTML = '<p>No orders match filters.</p>';
+            return;
+        }
+        container.innerHTML = '';
+        orders.forEach(order => {
+            const div = document.createElement('div');
+            div.className = 'order-card';
+            div.innerHTML = `
+                <div><strong>${escapeHtml(order.user_name)}</strong> (${order.user_id})</div>
+                <div>Total: $${order.total}</div>
+                <div>Status: <span class="status">${order.status || 'Pending'}</span></div>
+                <div>Payment: ${order.paymentMethod || 'N/A'}</div>
+                <div>Time: ${new Date(order.timestamp).toLocaleString()}</div>
+                <div>
+                    <button class="status-btn" data-id="${order.orderId}" data-status="Preparing">🔄 Preparing</button>
+                    <button class="status-btn" data-id="${order.orderId}" data-status="Ready">✅ Ready</button>
+                    <button class="status-btn" data-id="${order.orderId}" data-status="Completed">🏁 Completed</button>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+        // Re-attach status button handlers
+        document.querySelectorAll('.status-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const orderId = btn.dataset.id;
+                const newStatus = btn.dataset.status;
+                try {
+                    const response = await fetch('/api/update-status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ orderId, status: newStatus })
+                    });
+                    const result = await response.json();
+                    if (result.success) {
+                        tg.showAlert(`Order ${orderId} marked as ${newStatus}.`);
+                        loadOrders(); // refresh full list
+                    } else {
+                        tg.showAlert(`Failed: ${result.error}`);
+                    }
+                } catch (error) {
+                    tg.showAlert('Error updating status');
+                }
+            });
+        });
+    }
+
+    function updateChart(orders) {
+        const last7Days = [...Array(7).keys()].map(i => {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            return d.toISOString().split('T')[0];
+        }).reverse();
+        const dailyTotal = last7Days.map(date => {
+            return orders.filter(o => o.timestamp.startsWith(date))
+                         .reduce((sum, o) => sum + o.total, 0);
+        });
+        const ctx = document.getElementById('revenueChart').getContext('2d');
+        if (revenueChart) revenueChart.destroy();
+        revenueChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: last7Days,
+                datasets: [{
+                    label: 'Revenue ($)',
+                    data: dailyTotal,
+                    borderColor: '#ff6b00',
+                    backgroundColor: 'rgba(255,107,0,0.1)',
+                    fill: true
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: true }
+        });
+    }
+
+    function exportToCSV() {
+        let data = allOrders; // export all orders; you could export filtered set instead
+        let csvRows = [["Order ID", "Customer", "Total", "Status", "Payment", "Date"]];
+        data.forEach(order => {
+            csvRows.push([
+                order.orderId,
+                order.user_name,
+                order.total,
+                order.status || 'Pending',
+                order.paymentMethod || 'N/A',
+                new Date(order.timestamp).toLocaleString()
+            ]);
+        });
+        const csvContent = csvRows.map(row => row.join(",")).join("\n");
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `orders_${new Date().toISOString().split('T')[0]}.csv`;
+        link.click();
     }
 
     function escapeHtml(str) {
@@ -142,7 +245,7 @@
     }
 
     loadOrders();
-    setInterval(loadOrders, 10000);
+    setInterval(loadOrders, 30000); // refresh every 30s
 </script>
 </body>
 </html>
