@@ -18,12 +18,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SELLER_CHAT_ID = 455774531  # integer – your numeric chat ID
+SELLER_CHAT_ID = 455774531
 YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 
 logging.basicConfig(level=logging.INFO)
 
-# ---------- Flask app (for dashboard and health) ----------
+# ---------- Flask app ----------
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
 ADMIN_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'change_this_password')
@@ -85,7 +85,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def reset_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Remove the persistent menu button (blue button at bottom)"""
     await context.bot.set_chat_menu_button(
         chat_id=update.effective_chat.id,
         menu_button=MenuButtonDefault()
@@ -93,7 +92,6 @@ async def reset_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Persistent menu button removed. Use the keyboard button.")
 
 async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Close the active chat session."""
     if 'reply_to_order' in context.user_data:
         order_id = context.user_data['reply_to_order']
         del context.user_data['reply_to_order']
@@ -102,12 +100,17 @@ async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No active chat to close.")
 
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("🔔 handle_order triggered")
+    if not update.message:
+        print("❌ No message object")
+        return
     if not update.message.web_app_data:
-        await update.message.reply_text("No order data received.")
+        print("❌ No web_app_data in message")
+        await update.message.reply_text("No order data received. Please use the 'Open Order menu' button.")
         return
 
     raw_data = update.message.web_app_data.data
-    logging.info(f"Raw order data: {raw_data}")
+    print(f"📦 Raw order data: {raw_data}")
 
     try:
         data = json.loads(raw_data)
@@ -125,6 +128,8 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = data.get('total', '0.00')
     points = data.get('points', 0)
     timestamp = data.get('timestamp', 'N/A')
+
+    print(f"✅ Order from {user_name} (ID: {user_id}) - ${total}")
 
     order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
     buyer_chat_id = update.effective_chat.id
@@ -180,7 +185,7 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"We'll notify you when your order is ready.",
         parse_mode="HTML"
     )
-    logging.info(f"Order {order_id} from {user_name} (ID: {user_id}) - ${total}")
+    logging.info(f"Order {order_id} from {user_name} - ${total}")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -193,11 +198,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['reply_to_order'] = order_id
             await query.edit_message_reply_markup(reply_markup=None)
             await query.message.reply_text(
-                f"✏️ Chat with customer (Order {order_id}). Send any message (text, photo, sticker).\n"
-                f"To close chat, use /closechat"
+                f"✏️ Chat with customer (Order {order_id}). Send any message.\nTo close chat, use /closechat"
             )
         else:
-            await query.message.reply_text("⚠️ Order not found. It may have expired.")
+            await query.message.reply_text("⚠️ Order not found.")
     elif data.startswith("ready_"):
         order_id = data.split("_", 1)[1]
         if order_id in order_storage:
@@ -206,16 +210,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_message(
                     chat_id=buyer_chat_id,
-                    text=f"🍽️ <b>Your order is ready for pickup!</b>\n\n"
-                         f"Thank you {user_name}! Come to Bird Nest House to collect your order.\n\n"
-                         f"📍 Location: [Your address]\n⏰ Hours: 9AM - 9PM",
+                    text=f"🍽️ <b>Your order is ready for pickup!</b>\n\nThank you {user_name}!",
                     parse_mode="HTML"
                 )
                 await query.edit_message_reply_markup(reply_markup=None)
-                await query.message.reply_text(f"✅ Ready notification sent to {user_name} (Order {order_id}).")
-                logging.info(f"Notified {user_name} for order {order_id}")
+                await query.message.reply_text(f"✅ Ready notification sent to {user_name}.")
             except Exception as e:
-                logging.error(f"Failed to send ready notification: {e}")
                 await query.message.reply_text("⚠️ Failed to send notification.")
         else:
             await query.message.reply_text("⚠️ Order not found.")
@@ -223,16 +223,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'reply_to_order' not in context.user_data:
         return
-
     order_id = context.user_data['reply_to_order']
     if order_id not in order_storage:
-        await update.message.reply_text("⚠️ Order session expired. Cannot send message.")
+        await update.message.reply_text("⚠️ Order session expired.")
         del context.user_data['reply_to_order']
         return
-
     buyer_chat_id = order_storage[order_id]['chat_id']
     user_name = order_storage[order_id]['user_name']
-
     try:
         if update.message.text:
             await context.bot.send_message(
@@ -249,22 +246,14 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML"
             )
         elif update.message.sticker:
-            await context.bot.send_sticker(
-                chat_id=buyer_chat_id,
-                sticker=update.message.sticker.file_id
-            )
+            await context.bot.send_sticker(chat_id=buyer_chat_id, sticker=update.message.sticker.file_id)
         else:
-            await update.message.reply_text("⚠️ Unsupported media. Send text, photo, or sticker.")
+            await update.message.reply_text("Unsupported media.")
             return
-
         await update.message.reply_text(f"✅ Message sent to {user_name}!")
-        logging.info(f"Reply sent to {user_name} for order {order_id}")
-        # Do NOT delete context.user_data['reply_to_order'] – allow multiple messages
     except Exception as e:
-        logging.error(f"Failed to forward reply: {e}")
         await update.message.reply_text("⚠️ Failed to send message.")
 
-# ---------- Bot Polling (runs in background thread) ----------
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -278,11 +267,13 @@ def run_bot():
     print("🤖 Bot started polling...")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
-# ---------- Start both (Flask + bot) ----------
 if __name__ == "__main__":
-    # Start bot in a background thread
+    print("=" * 50)
+    print("⚠️  IMPORTANT: Ensure webhook is deleted!")
+    print("Run this command once (in terminal or Render Shell):")
+    print(f"curl -X POST \"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook\"")
+    print("=" * 50)
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
-    # Run Flask development server
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
