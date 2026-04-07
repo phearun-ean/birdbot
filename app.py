@@ -2,6 +2,7 @@ import logging
 import json
 import os
 import threading
+import asyncio
 from datetime import datetime
 from typing import Dict, Any
 from telegram import (
@@ -254,7 +255,12 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("⚠️ Failed to send message.")
 
+# ---------- Bot Polling (with event loop fix) ----------
 def run_bot():
+    # Create a new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("resetmenu", reset_menu))
@@ -267,6 +273,7 @@ def run_bot():
     print("🤖 Bot started polling...")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
+# ---------- Start both ----------
 if __name__ == "__main__":
     print("=" * 50)
     print("⚠️  IMPORTANT: Ensure webhook is deleted!")
