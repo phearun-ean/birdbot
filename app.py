@@ -55,9 +55,9 @@ def dashboard():
         '''
     return send_from_directory('.', 'dashboard.html')
 
-# ---------- API endpoint to serve orders ----------
 @flask_app.route('/api/orders')
 def api_orders():
+    """Return all orders from orders.json"""
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, 'r') as f:
             orders = json.load(f)
@@ -67,6 +67,25 @@ def api_orders():
             orders_list.append(order_data)
         return jsonify(orders_list)
     return jsonify([])
+
+@flask_app.route('/api/update-status', methods=['POST'])
+def update_status():
+    """Update order status in orders.json"""
+    data = request.get_json()
+    order_id = data.get('orderId')
+    new_status = data.get('status')
+    if not order_id or not new_status:
+        return jsonify({'success': False, 'error': 'Missing orderId or status'}), 400
+    if not os.path.exists(ORDERS_FILE):
+        return jsonify({'success': False, 'error': 'Orders file not found'}), 404
+    with open(ORDERS_FILE, 'r') as f:
+        orders = json.load(f)
+    if order_id not in orders:
+        return jsonify({'success': False, 'error': 'Order not found'}), 404
+    orders[order_id]['status'] = new_status
+    with open(ORDERS_FILE, 'w') as f:
+        json.dump(orders, f, indent=2)
+    return jsonify({'success': True})
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -116,6 +135,19 @@ async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No active chat to close.")
 
+async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id == SELLER_CHAT_ID:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Open Dashboard", web_app=WebAppInfo(url="https://birdbot-5sgv.onrender.com/dashboard"))]
+        ])
+        await update.message.reply_text(
+            "📊 *Seller Dashboard*\n\nClick the button below to manage orders.",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+    else:
+        await update.message.reply_text("Unauthorized.")
+
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("🔔 handle_order triggered")
     if not update.message:
@@ -161,7 +193,8 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'timestamp': timestamp,
         'total': total,
         'points': points,
-        'items': items
+        'items': items,
+        'status': 'Pending'
     }
     save_orders(order_storage)
 
@@ -232,6 +265,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await query.edit_message_reply_markup(reply_markup=None)
                 await query.message.reply_text(f"✅ Ready notification sent to {user_name}.")
+                # Also update status in orders.json
+                if order_id in order_storage:
+                    order_storage[order_id]['status'] = 'Ready'
+                    save_orders(order_storage)
             except Exception as e:
                 await query.message.reply_text("⚠️ Failed to send notification.")
         else:
@@ -277,6 +314,7 @@ def run_bot():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("resetmenu", reset_menu))
     application.add_handler(CommandHandler("closechat", close_chat))
+    application.add_handler(CommandHandler("dashboard", dashboard_command))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
@@ -291,7 +329,6 @@ if __name__ == "__main__":
     print("⚠️  IMPORTANT: Ensure webhook is deleted!")
     print(f"curl -X POST \"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook\"")
     print("=" * 50)
-    # Run Flask in background thread, bot in main thread
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     run_bot()
