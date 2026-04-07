@@ -2,6 +2,8 @@ import logging
 import json
 import os
 import threading
+import urllib.request
+import urllib.error
 from datetime import datetime
 from typing import Dict, Any
 from telegram import (
@@ -57,7 +59,6 @@ def dashboard():
 
 @flask_app.route('/api/orders')
 def api_orders():
-    """Return all orders from orders.json"""
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, 'r') as f:
             orders = json.load(f)
@@ -70,7 +71,6 @@ def api_orders():
 
 @flask_app.route('/api/update-status', methods=['POST'])
 def update_status():
-    """Update order status in orders.json"""
     data = request.get_json()
     order_id = data.get('orderId')
     new_status = data.get('status')
@@ -86,6 +86,30 @@ def update_status():
     with open(ORDERS_FILE, 'w') as f:
         json.dump(orders, f, indent=2)
     return jsonify({'success': True})
+
+@flask_app.route('/api/send-message', methods=['POST'])
+def send_message():
+    """Send a direct message from seller to a customer using Telegram API (no external libs)."""
+    data = request.get_json()
+    chat_id = data.get('chatId')
+    message = data.get('message')
+    if not chat_id or not message:
+        return jsonify({'success': False, 'error': 'Missing chatId or message'}), 400
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = json.dumps({
+        'chat_id': chat_id,
+        'text': f"📢 *Seller Message:*\n{message}",
+        'parse_mode': 'Markdown'
+    }).encode('utf-8')
+    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req) as response:
+            if response.status == 200:
+                return jsonify({'success': True})
+            else:
+                return jsonify({'success': False, 'error': 'Telegram API error'}), 500
+    except urllib.error.URLError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -147,6 +171,41 @@ async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text("Unauthorized.")
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != SELLER_CHAT_ID:
+        await update.message.reply_text("Unauthorized.")
+        return
+    message = ' '.join(context.args)
+    if not message:
+        await update.message.reply_text("Usage: /broadcast <message>")
+        return
+    if not os.path.exists(ORDERS_FILE):
+        await update.message.reply_text("No orders found.")
+        return
+    with open(ORDERS_FILE, 'r') as f:
+        orders = json.load(f)
+    chat_ids = set()
+    for order in orders.values():
+        if 'chat_id' in order:
+            chat_ids.add(order['chat_id'])
+    if not chat_ids:
+        await update.message.reply_text("No customers found.")
+        return
+    sent = 0
+    failed = 0
+    for chat_id in chat_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"📢 *Announcement:*\n{message}",
+                parse_mode="Markdown"
+            )
+            sent += 1
+        except Exception as e:
+            logging.error(f"Failed to send to {chat_id}: {e}")
+            failed += 1
+    await update.message.reply_text(f"Broadcast complete. Sent: {sent}, Failed: {failed}")
 
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("🔔 handle_order triggered")
@@ -265,7 +324,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await query.edit_message_reply_markup(reply_markup=None)
                 await query.message.reply_text(f"✅ Ready notification sent to {user_name}.")
-                # Also update status in orders.json
                 if order_id in order_storage:
                     order_storage[order_id]['status'] = 'Ready'
                     save_orders(order_storage)
@@ -315,6 +373,7 @@ def run_bot():
     application.add_handler(CommandHandler("resetmenu", reset_menu))
     application.add_handler(CommandHandler("closechat", close_chat))
     application.add_handler(CommandHandler("dashboard", dashboard_command))
+    application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
