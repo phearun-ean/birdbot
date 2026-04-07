@@ -2,7 +2,6 @@ import logging
 import json
 import os
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from typing import Dict, Any
 from telegram import (
@@ -19,15 +18,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SELLER_CHAT_ID = 455774531  # integer – your numeric chat ID
+SELLER_CHAT_ID = 455774531
 YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 
 logging.basicConfig(level=logging.INFO)
 
-# ---------- Flask app (for Gunicorn & dashboard) ----------
+# ---------- Flask app ----------
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
-
 ADMIN_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'change_this_password')
 
 @app.route('/')
@@ -87,15 +85,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def reset_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Remove the persistent menu button (blue button at bottom)"""
     await context.bot.set_chat_menu_button(
         chat_id=update.effective_chat.id,
-        menu_button=MenuButtonDefault()   # removes custom button
+        menu_button=MenuButtonDefault()
     )
-    await update.message.reply_text("✅ Persistent menu button removed. Please use the 'Open Order menu' keyboard button below.")
+    await update.message.reply_text("✅ Persistent menu button removed. Use the keyboard button.")
 
 async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Close the active chat session."""
     if 'reply_to_order' in context.user_data:
         order_id = context.user_data['reply_to_order']
         del context.user_data['reply_to_order']
@@ -118,7 +114,6 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Error processing order.")
         return
 
-    # Extract fields
     user_id = str(data.get('userId', 'Unknown'))
     user_name = data.get('userName', 'Guest')
     username = data.get('username', '')
@@ -129,11 +124,9 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     points = data.get('points', 0)
     timestamp = data.get('timestamp', 'N/A')
 
-    # Create a unique order ID
     order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
     buyer_chat_id = update.effective_chat.id
 
-    # Store order
     order_storage[order_id] = {
         'chat_id': buyer_chat_id,
         'user_id': user_id,
@@ -148,7 +141,6 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     save_orders(order_storage)
 
-    # Build customer info for seller
     customer_info = f"👤 <b>Customer:</b> {user_name}\n"
     if username:
         customer_info += f"🆔 <b>Username:</b> @{username}\n"
@@ -168,13 +160,11 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 <b>Order ID:</b> <code>{order_id}</code>"
     )
 
-    # Inline keyboard for seller
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💬 Reply to Customer", callback_data=f"reply_{order_id}")],
         [InlineKeyboardButton("✅ Mark as Ready", callback_data=f"ready_{order_id}")]
     ])
 
-    # Send order details to seller
     await context.bot.send_message(
         chat_id=SELLER_CHAT_ID,
         text=order_text,
@@ -182,7 +172,6 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard
     )
 
-    # Confirm to customer
     await update.message.reply_text(
         f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
         f"Total: ${total}\nYou earned {points} loyalty points 🎉\n\n"
@@ -194,8 +183,8 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     data = query.data
+
     if data.startswith("reply_"):
         order_id = data.split("_", 1)[1]
         if order_id in order_storage:
@@ -225,7 +214,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logging.info(f"Notified {user_name} for order {order_id}")
             except Exception as e:
                 logging.error(f"Failed to send ready notification: {e}")
-                await query.message.reply_text("⚠️ Failed to send notification. Customer may have blocked the bot.")
+                await query.message.reply_text("⚠️ Failed to send notification.")
         else:
             await query.message.reply_text("⚠️ Order not found.")
 
@@ -269,18 +258,16 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Message sent to {user_name}!")
         logging.info(f"Reply sent to {user_name} for order {order_id}")
         # Do NOT delete context.user_data['reply_to_order'] – allow multiple messages
-        # User can close chat with /closechat
-
     except Exception as e:
         logging.error(f"Failed to forward reply: {e}")
-        await update.message.reply_text("⚠️ Failed to send message. Customer may have blocked the bot.")
+        await update.message.reply_text("⚠️ Failed to send message.")
 
-# ---------- Bot Polling ----------
+# ---------- Bot Polling (runs in background thread) ----------
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("resetmenu", reset_menu))
-    application.add_handler(CommandHandler("closechat", close_chat))   # <-- added
+    application.add_handler(CommandHandler("closechat", close_chat))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
@@ -289,19 +276,8 @@ def run_bot():
     print("🤖 Bot started polling...")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
-# ---------- HTTP Health Check Server ----------
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
+# ---------- Start bot in background thread when module loads ----------
+bot_thread = threading.Thread(target=run_bot, daemon=True)
+bot_thread.start()
 
-def run_http():
-    server = HTTPServer(('0.0.0.0', 10000), HealthHandler)
-    server.serve_forever()
-
-# ---------- Start Both ----------
-if __name__ == "__main__":
-    http_thread = threading.Thread(target=run_http, daemon=True)
-    http_thread.start()
-    run_bot()
+# The Flask app will be run by Gunicorn – no need for if __name__ == "__main__"
