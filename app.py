@@ -13,6 +13,8 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, CallbackQueryHandler
 )
+from flask import Flask, request, session, redirect, url_for, send_from_directory
+import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,6 +23,39 @@ SELLER_CHAT_ID = 455774531  # integer – your numeric chat ID
 YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 
 logging.basicConfig(level=logging.INFO)
+
+# ---------- Flask app (for Gunicorn & dashboard) ----------
+app = Flask(__name__)
+app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
+
+ADMIN_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'change_this_password')
+
+@app.route('/')
+def health():
+    return "Bot is running", 200
+
+@app.route('/dashboard', methods=['GET', 'POST'])
+def dashboard():
+    if request.method == 'POST':
+        if request.form.get('password') == ADMIN_PASSWORD:
+            session['dashboard_auth'] = True
+            return redirect(url_for('dashboard'))
+        else:
+            return "<h2>Wrong password</h2><a href='/dashboard'>Try again</a>", 401
+    if not session.get('dashboard_auth'):
+        return '''
+            <!DOCTYPE html>
+            <html>
+            <head><title>Dashboard Login</title></head>
+            <body style="font-family: sans-serif; text-align: center; margin-top: 100px;">
+                <form method="post">
+                    <label>Password: <input type="password" name="password" required></label>
+                    <button type="submit">Login</button>
+                </form>
+            </body>
+            </html>
+        '''
+    return send_from_directory('.', 'dashboard.html')
 
 # ---------- Persistent order storage ----------
 ORDERS_FILE = "orders.json"
@@ -58,6 +93,15 @@ async def reset_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         menu_button=MenuButtonDefault()   # removes custom button
     )
     await update.message.reply_text("✅ Persistent menu button removed. Please use the 'Open Order menu' keyboard button below.")
+
+async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Close the active chat session."""
+    if 'reply_to_order' in context.user_data:
+        order_id = context.user_data['reply_to_order']
+        del context.user_data['reply_to_order']
+        await update.message.reply_text(f"✅ Chat for order {order_id} closed.")
+    else:
+        await update.message.reply_text("No active chat to close.")
 
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.web_app_data:
@@ -158,7 +202,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['reply_to_order'] = order_id
             await query.edit_message_reply_markup(reply_markup=None)
             await query.message.reply_text(
-                f"✏️ Type your reply for order {order_id}:\n(Send text, photo, or sticker)"
+                f"✏️ Chat with customer (Order {order_id}). Send any message (text, photo, sticker).\n"
+                f"To close chat, use /closechat"
             )
         else:
             await query.message.reply_text("⚠️ Order not found. It may have expired.")
@@ -223,7 +268,8 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ Message sent to {user_name}!")
         logging.info(f"Reply sent to {user_name} for order {order_id}")
-        del context.user_data['reply_to_order']
+        # Do NOT delete context.user_data['reply_to_order'] – allow multiple messages
+        # User can close chat with /closechat
 
     except Exception as e:
         logging.error(f"Failed to forward reply: {e}")
@@ -233,7 +279,8 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("resetmenu", reset_menu))   # <-- added here
+    application.add_handler(CommandHandler("resetmenu", reset_menu))
+    application.add_handler(CommandHandler("closechat", close_chat))   # <-- added
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
