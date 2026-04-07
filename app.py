@@ -12,7 +12,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, CallbackQueryHandler
 )
-from flask import Flask, request, session, redirect, url_for, send_from_directory
+from flask import Flask, request, session, redirect, url_for, send_from_directory, jsonify
 import secrets
 from dotenv import load_dotenv
 
@@ -54,6 +54,19 @@ def dashboard():
             </html>
         '''
     return send_from_directory('.', 'dashboard.html')
+
+# ---------- API endpoint to serve orders ----------
+@flask_app.route('/api/orders')
+def api_orders():
+    if os.path.exists(ORDERS_FILE):
+        with open(ORDERS_FILE, 'r') as f:
+            orders = json.load(f)
+        orders_list = []
+        for order_id, order_data in orders.items():
+            order_data['orderId'] = order_id
+            orders_list.append(order_data)
+        return jsonify(orders_list)
+    return jsonify([])
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -276,10 +289,8 @@ def run_bot():
 if __name__ == "__main__":
     print("=" * 50)
     print("⚠️  IMPORTANT: Ensure webhook is deleted!")
-    print("Run this command once (in terminal or Render Shell):")
     print(f"curl -X POST \"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook\"")
     print("=" * 50)
-    
     # Run Flask in background thread, bot in main thread
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
