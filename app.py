@@ -25,6 +25,27 @@ YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 
 logging.basicConfig(level=logging.INFO)
 
+# ---------- Persistent order storage (must be defined before Flask routes) ----------
+ORDERS_FILE = "orders.json"
+
+def load_orders() -> Dict[str, Any]:
+    if os.path.exists(ORDERS_FILE):
+        try:
+            with open(ORDERS_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Failed to load orders: {e}")
+    return {}
+
+def save_orders(orders: Dict[str, Any]) -> None:
+    try:
+        with open(ORDERS_FILE, 'w') as f:
+            json.dump(orders, f, indent=2)
+    except Exception as e:
+        logging.error(f"Failed to save orders: {e}")
+
+order_storage = load_orders()
+
 # ---------- Flask app ----------
 flask_app = Flask(__name__)
 flask_app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
@@ -59,7 +80,12 @@ def dashboard():
 
 @flask_app.route('/api/orders')
 def api_orders():
-    if os.path.exists(ORDERS_FILE):
+    # Ensure the file exists
+    if not os.path.exists(ORDERS_FILE):
+        with open(ORDERS_FILE, 'w') as f:
+            json.dump({}, f)
+        return jsonify([])
+    try:
         with open(ORDERS_FILE, 'r') as f:
             orders = json.load(f)
         orders_list = []
@@ -67,7 +93,9 @@ def api_orders():
             order_data['orderId'] = order_id
             orders_list.append(order_data)
         return jsonify(orders_list)
-    return jsonify([])
+    except Exception as e:
+        logging.error(f"Error reading orders: {e}")
+        return jsonify([])
 
 @flask_app.route('/api/update-status', methods=['POST'])
 def update_status():
@@ -89,7 +117,6 @@ def update_status():
 
 @flask_app.route('/api/send-message', methods=['POST'])
 def send_message():
-    """Send a direct message from seller to a customer using Telegram API (no external libs)."""
     data = request.get_json()
     chat_id = data.get('chatId')
     message = data.get('message')
@@ -114,27 +141,6 @@ def send_message():
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
     flask_app.run(host='0.0.0.0', port=port, use_reloader=False, threaded=True)
-
-# ---------- Persistent order storage ----------
-ORDERS_FILE = "orders.json"
-
-def load_orders() -> Dict[str, Any]:
-    if os.path.exists(ORDERS_FILE):
-        try:
-            with open(ORDERS_FILE, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            logging.error(f"Failed to load orders: {e}")
-    return {}
-
-def save_orders(orders: Dict[str, Any]) -> None:
-    try:
-        with open(ORDERS_FILE, 'w') as f:
-            json.dump(orders, f, indent=2)
-    except Exception as e:
-        logging.error(f"Failed to save orders: {e}")
-
-order_storage = load_orders()
 
 # ---------- Bot Handlers ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):

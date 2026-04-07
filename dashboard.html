@@ -131,16 +131,21 @@
     let revenueChart = null;
 
     async function loadOrders() {
-        const container = document.getElementById('ordersContainer');
-        container.innerHTML = '<div class="spinner"></div>';
-        try {
-            const response = await fetch('/api/orders');
-            allOrders = await response.json();
-            allOrders.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-            applyFilters();
-        } catch (error) {
-            console.error(error);
-            container.innerHTML = '<p>Error loading orders. Ensure the bot is running.</p>';
+    const container = document.getElementById('ordersContainer');
+    container.innerHTML = '<div class="spinner"></div>';
+    try {
+        const response = await fetch('/api/orders');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const orders = await response.json();
+        console.log('Orders loaded:', orders.length);
+        allOrders = orders;
+        allOrders.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+        applyFilters();
+    } catch (error) {
+        console.error('Fetch error:', error);
+        container.innerHTML = `<p>Error loading orders: ${error.message}. Ensure the bot is running and you have placed at least one order.</p>`;
         }
     }
 
