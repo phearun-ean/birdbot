@@ -14,9 +14,15 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, CallbackQueryHandler
 )
-from flask import Flask, request, session, redirect, url_for, send_from_directory, jsonify
+from flask import Flask, request, session, redirect, url_for, send_from_directory, jsonify, send_file
 import secrets
 from dotenv import load_dotenv
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.enums import TA_CENTER
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -25,7 +31,54 @@ YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 
 logging.basicConfig(level=logging.INFO)
 
-# ---------- Persistent order storage (must be defined before Flask routes) ----------
+# ---------- Invoice generation ----------
+INVOICE_DIR = "invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+
+def generate_invoice(order_data: dict) -> str:
+    order_id = order_data.get('orderId')
+    filename = f"{INVOICE_DIR}/invoice_{order_id}.pdf"
+    doc = SimpleDocTemplate(filename, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], alignment=TA_CENTER, textColor=colors.orange)
+    story = []
+    story.append(Paragraph("Bird Nest House", title_style))
+    story.append(Paragraph("Official Invoice", styles['Heading2']))
+    story.append(Spacer(1, 0.2*inch))
+    story.append(Paragraph(f"Order ID: {order_id}", styles['Normal']))
+    story.append(Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+    story.append(Paragraph(f"Customer: {order_data.get('user_name', 'N/A')}", styles['Normal']))
+    story.append(Paragraph(f"Payment Method: {order_data.get('paymentMethod', 'N/A')}", styles['Normal']))
+    story.append(Spacer(1, 0.2*inch))
+    items_data = [["Item", "Quantity", "Unit Price", "Total"]]
+    for item in order_data.get('items', []):
+        qty = item.get('quantity', 1)
+        price = item.get('price', 0)
+        items_data.append([item.get('name', '?'), str(qty), f"${price:.2f}", f"${price * qty:.2f}"])
+    if order_data.get('discountApplied', 0) > 0:
+        items_data.append(["Discount", "", "", f"-${order_data['discountApplied']:.2f}"])
+    items_data.append(["", "", "Subtotal:", f"${order_data.get('total', 0) + order_data.get('discountApplied', 0):.2f}"])
+    items_data.append(["", "", "Total:", f"${order_data.get('total', 0):.2f}"])
+    table = Table(items_data, colWidths=[3*inch, 1*inch, 1.5*inch, 1.5*inch])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 0.3*inch))
+    story.append(Paragraph("Thank you for shopping at Bird Nest House!", styles['Normal']))
+    story.append(Paragraph("For support, contact us on Telegram.", styles['Normal']))
+    doc.build(story)
+    return filename
+
+# ---------- Persistent order storage ----------
 ORDERS_FILE = "orders.json"
 
 def load_orders() -> Dict[str, Any]:
@@ -50,6 +103,7 @@ order_storage = load_orders()
 flask_app = Flask(__name__)
 flask_app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
 ADMIN_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'change_this_password')
+ADMIN_SECRET = os.getenv('ADMIN_SECRET', 'my-secret-key')
 
 @flask_app.route('/')
 def health():
@@ -80,7 +134,6 @@ def dashboard():
 
 @flask_app.route('/api/orders')
 def api_orders():
-    # Ensure the file exists
     if not os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, 'w') as f:
             json.dump({}, f)
@@ -137,6 +190,26 @@ def send_message():
                 return jsonify({'success': False, 'error': 'Telegram API error'}), 500
     except urllib.error.URLError as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/invoice/<order_id>')
+def get_invoice(order_id):
+    invoice_path = f"{INVOICE_DIR}/invoice_{order_id}.pdf"
+    if os.path.exists(invoice_path):
+        return send_file(invoice_path, as_attachment=True, download_name=f"invoice_{order_id}.pdf")
+    return jsonify({'error': 'Invoice not found'}), 404
+
+@flask_app.route('/api/send-invoice/<order_id>', methods=['POST'])
+def send_invoice_manual(order_id):
+    if order_id not in order_storage:
+        return jsonify({'error': 'Order not found'}), 404
+    if order_storage[order_id].get('invoiceSent'):
+        return jsonify({'error': 'Invoice already sent'}), 400
+    try:
+        invoice_path = generate_invoice(order_storage[order_id])
+        # In a real scenario, you would send via bot. Here we just return success.
+        return jsonify({'success': True, 'invoiceUrl': f'/api/invoice/{order_id}'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -215,11 +288,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("🔔 handle_order triggered")
-    if not update.message:
-        print("❌ No message object")
-        return
-    if not update.message.web_app_data:
-        print("❌ No web_app_data in message")
+    if not update.message or not update.message.web_app_data:
         await update.message.reply_text("No order data received. Please use the 'Open Order menu' button.")
         return
 
@@ -242,8 +311,8 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = data.get('total', '0.00')
     points = data.get('points', 0)
     timestamp = data.get('timestamp', 'N/A')
-
-    print(f"✅ Order from {user_name} (ID: {user_id}) - ${total}")
+    payment_method = data.get('paymentMethod', 'Unknown')
+    send_invoice_now = data.get('sendInvoiceImmediately', False)
 
     order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
     buyer_chat_id = update.effective_chat.id
@@ -256,10 +325,12 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'first_name': first_name,
         'last_name': last_name,
         'timestamp': timestamp,
-        'total': total,
+        'total': float(total),
         'points': points,
         'items': items,
-        'status': 'Pending'
+        'status': 'Paid' if send_invoice_now else 'Pending (COD)',
+        'paymentMethod': payment_method,
+        'invoiceSent': send_invoice_now
     }
     save_orders(order_storage)
 
@@ -279,12 +350,14 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 <b>Total:</b> ${total}\n"
         f"⭐ <b>Points Earned:</b> {points}\n"
         f"🕐 <b>Time:</b> {timestamp}\n"
+        f"💳 <b>Payment:</b> {payment_method}\n"
         f"🆔 <b>Order ID:</b> <code>{order_id}</code>"
     )
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💬 Reply to Customer", callback_data=f"reply_{order_id}")],
-        [InlineKeyboardButton("✅ Mark as Ready", callback_data=f"ready_{order_id}")]
+        [InlineKeyboardButton("✅ Mark as Paid & Send Invoice", callback_data=f"paid_{order_id}")],
+        [InlineKeyboardButton("📄 Mark as Ready", callback_data=f"ready_{order_id}")]
     ])
 
     await context.bot.send_message(
@@ -302,6 +375,22 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     logging.info(f"Order {order_id} from {user_name} - ${total}")
 
+    # Auto‑send invoice for paid orders
+    if send_invoice_now:
+        try:
+            invoice_path = generate_invoice(order_storage[order_id])
+            with open(invoice_path, 'rb') as f:
+                await context.bot.send_document(
+                    chat_id=buyer_chat_id,
+                    document=f,
+                    filename=f"invoice_{order_id}.pdf",
+                    caption=f"🧾 *Invoice for Order {order_id}*\nThank you for your payment!",
+                    parse_mode="Markdown"
+                )
+            logging.info(f"Invoice automatically sent to {user_name} for order {order_id}")
+        except Exception as e:
+            logging.error(f"Failed to generate/send invoice: {e}")
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -317,6 +406,34 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.message.reply_text("⚠️ Order not found.")
+
+    elif data.startswith("paid_"):
+        order_id = data.split("_", 1)[1]
+        if order_id in order_storage:
+            buyer_chat_id = order_storage[order_id]['chat_id']
+            user_name = order_storage[order_id]['user_name']
+            try:
+                invoice_path = generate_invoice(order_storage[order_id])
+                with open(invoice_path, 'rb') as f:
+                    await context.bot.send_document(
+                        chat_id=buyer_chat_id,
+                        document=f,
+                        filename=f"invoice_{order_id}.pdf",
+                        caption=f"🧾 *Invoice for Order {order_id}*\nPayment received. Thank you!",
+                        parse_mode="Markdown"
+                    )
+                order_storage[order_id]['status'] = 'Paid'
+                order_storage[order_id]['invoiceSent'] = True
+                save_orders(order_storage)
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.message.reply_text(f"✅ Invoice sent to {user_name} and order marked as Paid.")
+                logging.info(f"Manual invoice sent to {user_name} for order {order_id}")
+            except Exception as e:
+                logging.error(f"Failed to send manual invoice: {e}")
+                await query.message.reply_text("⚠️ Failed to generate invoice.")
+        else:
+            await query.message.reply_text("⚠️ Order not found.")
+
     elif data.startswith("ready_"):
         order_id = data.split("_", 1)[1]
         if order_id in order_storage:
@@ -330,9 +447,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await query.edit_message_reply_markup(reply_markup=None)
                 await query.message.reply_text(f"✅ Ready notification sent to {user_name}.")
-                if order_id in order_storage:
-                    order_storage[order_id]['status'] = 'Ready'
-                    save_orders(order_storage)
+                order_storage[order_id]['status'] = 'Ready'
+                save_orders(order_storage)
             except Exception as e:
                 await query.message.reply_text("⚠️ Failed to send notification.")
         else:
@@ -372,7 +488,6 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("⚠️ Failed to send message.")
 
-# ---------- Bot Polling (in main thread) ----------
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -388,7 +503,6 @@ def run_bot():
     print("🤖 Bot started polling...")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
-# ---------- Start ----------
 if __name__ == "__main__":
     print("=" * 50)
     print("⚠️  IMPORTANT: Ensure webhook is deleted!")
