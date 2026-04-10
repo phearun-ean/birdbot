@@ -488,6 +488,20 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("⚠️ Failed to send message.")
 
+import time
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check if bot is running"""
+    await update.message.reply_text(
+        "🤖 **Bot Status**\n\n"
+        "✅ Bot is running normally!\n"
+        f"🕐 Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        "🔄 Auto-restart enabled\n"
+        "⏰ Cron job active (every 10 minutes)",
+        parse_mode="Markdown"
+    )
+
+# ---------- Bot Polling (in main thread) ----------
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -495,6 +509,7 @@ def run_bot():
     application.add_handler(CommandHandler("closechat", close_chat))
     application.add_handler(CommandHandler("dashboard", dashboard_command))
     application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("status", status))  # <-- Add this
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
@@ -503,11 +518,24 @@ def run_bot():
     print("🤖 Bot started polling...")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
+# ---------- Start with auto-restart ----------
 if __name__ == "__main__":
     print("=" * 50)
     print("⚠️  IMPORTANT: Ensure webhook is deleted!")
     print(f"curl -X POST \"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook\"")
     print("=" * 50)
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    run_bot()
+    
+    # Auto-restart loop - keeps bot alive even if it crashes
+    while True:
+        try:
+            print("🚀 Starting bot...")
+            flask_thread = threading.Thread(target=run_flask, daemon=True)
+            flask_thread.start()
+            run_bot()
+        except Exception as e:
+            print(f"❌ Bot crashed: {e}")
+            print("🔄 Restarting in 10 seconds...")
+            time.sleep(10)
+        else:
+            print("✅ Bot stopped normally")
+            break
