@@ -4,6 +4,7 @@ import os
 import threading
 import urllib.request
 import urllib.error
+import time
 from datetime import datetime
 from typing import Dict, Any
 from telegram import (
@@ -206,7 +207,6 @@ def send_invoice_manual(order_id):
         return jsonify({'error': 'Invoice already sent'}), 400
     try:
         invoice_path = generate_invoice(order_storage[order_id])
-        # In a real scenario, you would send via bot. Here we just return success.
         return jsonify({'success': True, 'invoiceUrl': f'/api/invoice/{order_id}'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -286,6 +286,21 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed += 1
     await update.message.reply_text(f"Broadcast complete. Sent: {sent}, Failed: {failed}")
 
+async def test_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test if bot can send message to seller"""
+    print(f"🧪 Test message command received from {update.effective_chat.id}")
+    try:
+        await context.bot.send_message(
+            chat_id=SELLER_CHAT_ID,
+            text="🧪 Test message from bot to seller"
+        )
+        await update.message.reply_text("✅ Test message sent to seller!")
+        print("✅ Test message sent successfully")
+    except Exception as e:
+        error_msg = f"❌ Failed to send test message: {e}"
+        print(error_msg)
+        await update.message.reply_text(error_msg)
+
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("🔔 handle_order triggered")
     if not update.message or not update.message.web_app_data:
@@ -360,12 +375,24 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📄 Mark as Ready", callback_data=f"ready_{order_id}")]
     ])
 
-    await context.bot.send_message(
-        chat_id=SELLER_CHAT_ID,
-        text=order_text,
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
+    # Debug: Print what we're about to send
+    print(f"📤 Attempting to send to seller chat ID: {SELLER_CHAT_ID}")
+    print(f"📝 Order ID: {order_id}")
+    print(f"👤 Customer: {user_name}")
+    print(f"💰 Total: ${total}")
+
+    try:
+        await context.bot.send_message(
+            chat_id=SELLER_CHAT_ID,
+            text=order_text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        print("✅ Seller notification sent successfully!")
+    except Exception as e:
+        print(f"❌ Failed to send seller notification: {e}")
+        logging.error(f"Failed to send seller notification: {e}")
+        await update.message.reply_text("⚠️ Order received but seller notification failed. We'll still process your order.")
 
     await update.message.reply_text(
         f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
@@ -488,8 +515,6 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("⚠️ Failed to send message.")
 
-import time
-
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check if bot is running"""
     await update.message.reply_text(
@@ -509,7 +534,8 @@ def run_bot():
     application.add_handler(CommandHandler("closechat", close_chat))
     application.add_handler(CommandHandler("dashboard", dashboard_command))
     application.add_handler(CommandHandler("broadcast", broadcast))
-    application.add_handler(CommandHandler("status", status))  # <-- Add this
+    application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("testmsg", test_message))  # Test command
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
