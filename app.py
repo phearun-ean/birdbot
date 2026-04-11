@@ -30,6 +30,19 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 SELLER_CHAT_ID = 455774531
 YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 
+# ========== ADD THE LOCK FILE CODE RIGHT HERE ==========
+import fcntl
+import sys
+
+# Create a lock file to prevent multiple instances
+lock_file = open("bot.lock", "w")
+try:
+    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except:
+    print("Another bot instance is already running!")
+    sys.exit(0)
+# =======================================================
+
 logging.basicConfig(level=logging.INFO)
 
 # ---------- Invoice generation ----------
