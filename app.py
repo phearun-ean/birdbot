@@ -30,18 +30,17 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 SELLER_CHAT_ID = 455774531
 YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
 
-# ========== ADD THE LOCK FILE CODE RIGHT HERE ==========
+# ========== LOCK FILE — prevents multiple instances ==========
 import fcntl
 import sys
 
-# Create a lock file to prevent multiple instances
 lock_file = open("bot.lock", "w")
 try:
     fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except:
     print("Another bot instance is already running!")
     sys.exit(0)
-# =======================================================
+# =============================================================
 
 logging.basicConfig(level=logging.INFO)
 
@@ -113,11 +112,70 @@ def save_orders(orders: Dict[str, Any]) -> None:
 
 order_storage = load_orders()
 
+# ---------- Shared helper: send Telegram notification to seller ----------
+def send_seller_notification_sync(order_id: str, order: dict, source: str = "Web"):
+    """
+    Sends a Telegram message to the seller using plain urllib (no async).
+    Works from Flask routes. 'source' is either 'Web' or 'Bot'.
+    """
+    items_text = "\n".join([
+        f"  • {i.get('name','?')} x{i.get('quantity', i.get('qty', 1))} — ${float(i.get('price', 0)):.2f}"
+        for i in order.get('items', [])
+    ])
+
+    customer_info = f"👤 <b>Customer:</b> {order.get('user_name', 'Guest')}\n"
+    username = order.get('username', '')
+    if username:
+        customer_info += f"🆔 <b>Username:</b> @{username}\n"
+    customer_info += f"🔢 <b>User ID:</b> <code>{order.get('user_id', '?')}</code>\n"
+    first_name = order.get('first_name', '')
+    last_name  = order.get('last_name', '')
+    if first_name:
+        customer_info += f"📛 <b>Name:</b> {first_name} {last_name}\n"
+
+    order_text = (
+        f"🆕 <b>NEW ORDER (via {source})!</b>\n\n"
+        f"{customer_info}\n"
+        f"📦 <b>Items:</b>\n{items_text}\n\n"
+        f"💰 <b>Total:</b> ${float(order.get('total', 0)):.2f}\n"
+        f"⭐ <b>Points:</b> {order.get('points', 0)}\n"
+        f"🕐 <b>Time:</b> {order.get('timestamp', 'N/A')}\n"
+        f"💳 <b>Payment:</b> {order.get('paymentMethod', 'Unknown')}\n"
+        f"🆔 <b>Order ID:</b> <code>{order_id}</code>"
+    )
+
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "💬 Reply to Customer", "callback_data": f"reply_{order_id}"}],
+            [{"text": "✅ Mark as Paid & Send Invoice", "callback_data": f"paid_{order_id}"}],
+            [{"text": "📄 Mark as Ready", "callback_data": f"ready_{order_id}"}]
+        ]
+    }
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = json.dumps({
+        'chat_id': SELLER_CHAT_ID,
+        'text': order_text,
+        'parse_mode': 'HTML',
+        'reply_markup': keyboard
+    }).encode('utf-8')
+    req = urllib.request.Request(
+        url, data=payload,
+        headers={'Content-Type': 'application/json'}
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            logging.info(f"✅ Seller notified for order {order_id} (source: {source})")
+            return True
+    except urllib.error.URLError as e:
+        logging.error(f"❌ Telegram notify failed for {order_id}: {e}")
+        return False
+
 # ---------- Flask app ----------
 flask_app = Flask(__name__)
 flask_app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
 ADMIN_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'change_this_password')
-ADMIN_SECRET = os.getenv('ADMIN_SECRET', 'my-secret-key')
+ADMIN_SECRET   = os.getenv('ADMIN_SECRET', 'my-secret-key')
 
 @flask_app.route('/')
 def health():
@@ -167,7 +225,7 @@ def api_orders():
 @flask_app.route('/api/update-status', methods=['POST'])
 def update_status():
     data = request.get_json()
-    order_id = data.get('orderId')
+    order_id   = data.get('orderId')
     new_status = data.get('status')
     if not order_id or not new_status:
         return jsonify({'success': False, 'error': 'Missing orderId or status'}), 400
@@ -184,9 +242,9 @@ def update_status():
 
 @flask_app.route('/api/send-message', methods=['POST'])
 def send_message():
-    data = request.get_json()
-    chat_id = data.get('chatId')
-    message = data.get('message')
+    data     = request.get_json()
+    chat_id  = data.get('chatId')
+    message  = data.get('message')
     if not chat_id or not message:
         return jsonify({'success': False, 'error': 'Missing chatId or message'}), 400
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -223,6 +281,67 @@ def send_invoice_manual(order_id):
         return jsonify({'success': True, 'invoiceUrl': f'/api/invoice/{order_id}'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# ============================================================
+# NEW ROUTE — receives orders placed directly from the Mini
+# App website (browser, not via Telegram bot button).
+# The frontend POSTs here with X-App-Secret header.
+# ============================================================
+@flask_app.route('/api/new-order', methods=['POST'])
+def receive_order_from_webapp():
+    # --- Auth check ---
+    secret = request.headers.get('X-App-Secret', '')
+    if secret != ADMIN_SECRET:
+        logging.warning("Unauthorized /api/new-order request")
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No JSON body'}), 400
+
+    user_id       = str(data.get('userId', 'web_unknown'))
+    user_name     = data.get('userName', 'Guest')
+    username      = data.get('username', '')
+    first_name    = data.get('firstName', '')
+    last_name     = data.get('lastName', '')
+    items         = data.get('items', [])
+    total         = data.get('total', '0.00')
+    points        = data.get('points', 0)
+    payment       = data.get('paymentMethod', 'Unknown')
+    buyer_chat_id = data.get('chatId')        # Telegram chat ID if available
+    timestamp     = data.get('timestamp',
+                              datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+    order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
+
+    order_record = {
+        'chat_id':      buyer_chat_id,
+        'user_id':      user_id,
+        'user_name':    user_name,
+        'username':     username,
+        'first_name':   first_name,
+        'last_name':    last_name,
+        'timestamp':    timestamp,
+        'total':        float(total),
+        'points':       points,
+        'items':        items,
+        'status':       'Pending (COD)' if payment == 'Cash on Delivery' else 'Paid',
+        'paymentMethod': payment,
+        'invoiceSent':  False,
+        'source':       'web'          # helpful for dashboard filtering
+    }
+    order_storage[order_id] = order_record
+    save_orders(order_storage)
+
+    # Notify seller on Telegram
+    notified = send_seller_notification_sync(order_id, order_record, source="Web")
+
+    return jsonify({
+        'success':  True,
+        'orderId':  order_id,
+        'notified': notified
+    })
+# ============================================================
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -284,8 +403,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not chat_ids:
         await update.message.reply_text("No customers found.")
         return
-    sent = 0
-    failed = 0
+    sent = failed = 0
     for chat_id in chat_ids:
         try:
             await context.bot.send_message(
@@ -300,7 +418,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Broadcast complete. Sent: {sent}, Failed: {failed}")
 
 async def test_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Test if bot can send message to seller"""
     print(f"🧪 Test message command received from {update.effective_chat.id}")
     try:
         await context.bot.send_message(
@@ -315,6 +432,7 @@ async def test_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(error_msg)
 
 async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles orders placed via the Telegram bot button (web_app_data)."""
     print("🔔 handle_order triggered")
     if not update.message or not update.message.web_app_data:
         await update.message.reply_text("No order data received. Please use the 'Open Order menu' button.")
@@ -330,38 +448,41 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Error processing order.")
         return
 
-    user_id = str(data.get('userId', 'Unknown'))
-    user_name = data.get('userName', 'Guest')
-    username = data.get('username', '')
-    first_name = data.get('firstName', '')
-    last_name = data.get('lastName', '')
-    items = data.get('items', [])
-    total = data.get('total', '0.00')
-    points = data.get('points', 0)
-    timestamp = data.get('timestamp', 'N/A')
-    payment_method = data.get('paymentMethod', 'Unknown')
-    send_invoice_now = data.get('sendInvoiceImmediately', False)
+    user_id           = str(data.get('userId', 'Unknown'))
+    user_name         = data.get('userName', 'Guest')
+    username          = data.get('username', '')
+    first_name        = data.get('firstName', '')
+    last_name         = data.get('lastName', '')
+    items             = data.get('items', [])
+    total             = data.get('total', '0.00')
+    points            = data.get('points', 0)
+    timestamp         = data.get('timestamp', 'N/A')
+    payment_method    = data.get('paymentMethod', 'Unknown')
+    send_invoice_now  = data.get('sendInvoiceImmediately', False)
 
-    order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
+    order_id      = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
     buyer_chat_id = update.effective_chat.id
 
-    order_storage[order_id] = {
-        'chat_id': buyer_chat_id,
-        'user_id': user_id,
-        'user_name': user_name,
-        'username': username,
-        'first_name': first_name,
-        'last_name': last_name,
-        'timestamp': timestamp,
-        'total': float(total),
-        'points': points,
-        'items': items,
-        'status': 'Paid' if send_invoice_now else 'Pending (COD)',
+    order_record = {
+        'chat_id':      buyer_chat_id,
+        'user_id':      user_id,
+        'user_name':    user_name,
+        'username':     username,
+        'first_name':   first_name,
+        'last_name':    last_name,
+        'timestamp':    timestamp,
+        'total':        float(total),
+        'points':       points,
+        'items':        items,
+        'status':       'Paid' if send_invoice_now else 'Pending (COD)',
         'paymentMethod': payment_method,
-        'invoiceSent': send_invoice_now
+        'invoiceSent':  send_invoice_now,
+        'source':       'bot'
     }
+    order_storage[order_id] = order_record
     save_orders(order_storage)
 
+    # Build seller notification
     customer_info = f"👤 <b>Customer:</b> {user_name}\n"
     if username:
         customer_info += f"🆔 <b>Username:</b> @{username}\n"
@@ -371,10 +492,14 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if last_name:
         customer_info += f"📛 <b>Last Name:</b> {last_name}\n"
 
-    items_text = "\n".join([f"  • {item.get('name', '?')} - ${item.get('price', 0)}" for item in items])
+    items_text = "\n".join([
+        f"  • {item.get('name', '?')} x{item.get('quantity', 1)} — ${float(item.get('price', 0)):.2f}"
+        for item in items
+    ])
+
     order_text = (
-        f"🆕 <b>NEW ORDER!</b>\n\n{customer_info}\n"
-        f"📦 <b>Items:</b>\n{items_text}\n"
+        f"🆕 <b>NEW ORDER (via Bot)!</b>\n\n{customer_info}\n"
+        f"📦 <b>Items:</b>\n{items_text}\n\n"
         f"💰 <b>Total:</b> ${total}\n"
         f"⭐ <b>Points Earned:</b> {points}\n"
         f"🕐 <b>Time:</b> {timestamp}\n"
@@ -383,16 +508,12 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💬 Reply to Customer", callback_data=f"reply_{order_id}")],
+        [InlineKeyboardButton("💬 Reply to Customer",         callback_data=f"reply_{order_id}")],
         [InlineKeyboardButton("✅ Mark as Paid & Send Invoice", callback_data=f"paid_{order_id}")],
-        [InlineKeyboardButton("📄 Mark as Ready", callback_data=f"ready_{order_id}")]
+        [InlineKeyboardButton("📄 Mark as Ready",             callback_data=f"ready_{order_id}")]
     ])
 
-    # Debug: Print what we're about to send
-    print(f"📤 Attempting to send to seller chat ID: {SELLER_CHAT_ID}")
-    print(f"📝 Order ID: {order_id}")
-    print(f"👤 Customer: {user_name}")
-    print(f"💰 Total: ${total}")
+    print(f"📤 Sending to seller chat ID: {SELLER_CHAT_ID} | Order: {order_id}")
 
     try:
         await context.bot.send_message(
@@ -415,7 +536,7 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     logging.info(f"Order {order_id} from {user_name} - ${total}")
 
-    # Auto‑send invoice for paid orders
+    # Auto-send invoice for card-paid orders
     if send_invoice_now:
         try:
             invoice_path = generate_invoice(order_storage[order_id])
@@ -427,7 +548,7 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption=f"🧾 *Invoice for Order {order_id}*\nThank you for your payment!",
                     parse_mode="Markdown"
                 )
-            logging.info(f"Invoice automatically sent to {user_name} for order {order_id}")
+            logging.info(f"Invoice auto-sent to {user_name} for order {order_id}")
         except Exception as e:
             logging.error(f"Failed to generate/send invoice: {e}")
 
@@ -451,7 +572,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id = data.split("_", 1)[1]
         if order_id in order_storage:
             buyer_chat_id = order_storage[order_id]['chat_id']
-            user_name = order_storage[order_id]['user_name']
+            user_name     = order_storage[order_id]['user_name']
             try:
                 invoice_path = generate_invoice(order_storage[order_id])
                 with open(invoice_path, 'rb') as f:
@@ -462,7 +583,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         caption=f"🧾 *Invoice for Order {order_id}*\nPayment received. Thank you!",
                         parse_mode="Markdown"
                     )
-                order_storage[order_id]['status'] = 'Paid'
+                order_storage[order_id]['status']      = 'Paid'
                 order_storage[order_id]['invoiceSent'] = True
                 save_orders(order_storage)
                 await query.edit_message_reply_markup(reply_markup=None)
@@ -478,7 +599,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id = data.split("_", 1)[1]
         if order_id in order_storage:
             buyer_chat_id = order_storage[order_id]['chat_id']
-            user_name = order_storage[order_id]['user_name']
+            user_name     = order_storage[order_id]['user_name']
             try:
                 await context.bot.send_message(
                     chat_id=buyer_chat_id,
@@ -503,7 +624,7 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del context.user_data['reply_to_order']
         return
     buyer_chat_id = order_storage[order_id]['chat_id']
-    user_name = order_storage[order_id]['user_name']
+    user_name     = order_storage[order_id]['user_name']
     try:
         if update.message.text:
             await context.bot.send_message(
@@ -529,7 +650,6 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Failed to send message.")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Check if bot is running"""
     await update.message.reply_text(
         "🤖 **Bot Status**\n\n"
         "✅ Bot is running normally!\n"
@@ -539,20 +659,20 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ---------- Bot Polling (in main thread) ----------
+# ---------- Bot polling ----------
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("resetmenu", reset_menu))
-    application.add_handler(CommandHandler("closechat", close_chat))
-    application.add_handler(CommandHandler("dashboard", dashboard_command))
-    application.add_handler(CommandHandler("broadcast", broadcast))
-    application.add_handler(CommandHandler("status", status))
-    application.add_handler(CommandHandler("testmsg", test_message))  # Test command
+    application.add_handler(CommandHandler("start",      start))
+    application.add_handler(CommandHandler("resetmenu",  reset_menu))
+    application.add_handler(CommandHandler("closechat",  close_chat))
+    application.add_handler(CommandHandler("dashboard",  dashboard_command))
+    application.add_handler(CommandHandler("broadcast",  broadcast))
+    application.add_handler(CommandHandler("status",     status))
+    application.add_handler(CommandHandler("testmsg",    test_message))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
-    application.add_handler(MessageHandler(filters.PHOTO, forward_reply))
+    application.add_handler(MessageHandler(filters.PHOTO,       forward_reply))
     application.add_handler(MessageHandler(filters.Sticker.ALL, forward_reply))
     print("🤖 Bot started polling...")
     application.run_polling(allowed_updates=["message", "callback_query"])
@@ -563,8 +683,7 @@ if __name__ == "__main__":
     print("⚠️  IMPORTANT: Ensure webhook is deleted!")
     print(f"curl -X POST \"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook\"")
     print("=" * 50)
-    
-    # Auto-restart loop - keeps bot alive even if it crashes
+
     while True:
         try:
             print("🚀 Starting bot...")
