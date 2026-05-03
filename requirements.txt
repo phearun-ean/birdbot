@@ -3,3 +3,4 @@ python-dotenv==1.0.0
 Flask==2.3.3
 gunicorn==21.2.0
 reportlab==4.2.5
+flask-cors
