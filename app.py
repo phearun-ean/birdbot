@@ -1,6 +1,6 @@
 """
 Bird Nest House — Telegram Bot + Flask Backend
-Complete working version with chat, notifications, and dashboard
+Complete working version with KHQR integration
 """
 
 import fcntl
@@ -19,8 +19,6 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, request, send_file, send_from_directory, session, url_for
 from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import letter
@@ -77,12 +75,19 @@ ADMIN_SECRET      = _require_env("ADMIN_SECRET")
 ADMIN_PASSWORD    = _require_env("DASHBOARD_PASSWORD")
 FLASK_SECRET_KEY  = _require_env("FLASK_SECRET_KEY", secrets.token_hex(32))
 
+# Store Location with KHQR Image URL
 STORE_LOCATION = {
     "name":      _require_env("STORE_NAME", "Bird Nest House"),
     "address":   _require_env("STORE_ADDRESS", "281 Street, Phnom Penh, Cambodia"),
     "latitude":  float(_require_env("STORE_LATITUDE", "11.58145")),
     "longitude": float(_require_env("STORE_LONGITUDE", "104.90451")),
     "phone":     _require_env("STORE_PHONE", "+855 78 999 685"),
+    # KHQR Image URL from Firebase Storage
+    "khqr_image_url": "https://firebasestorage.googleapis.com/v0/b/birdnesttgminiapp.firebasestorage.app/o/ABA_KHQR.jpeg?alt=media&token=7eb2c7a1-720c-4758-9b2a-5f4f69fac285",
+    # KHQR Account Details
+    "khqr_usd_account": "000 158 431",
+    "khqr_khr_account": "002 750 675",
+    "khqr_account_name": "PHEARUN EAN",
 }
 STORE_LOCATION["map_url"] = (
     f"https://maps.google.com/?q={STORE_LOCATION['latitude']},{STORE_LOCATION['longitude']}"
@@ -348,22 +353,6 @@ def send_telegram_document(chat_id: int, document_path: str, caption: str = "") 
         return False
 
 # ==================== AUTH HELPERS ====================
-def require_admin_secret(f):
-    """Decorator: reject requests that don't carry the correct X-App-Secret header."""
-    from functools import wraps
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        # Allow OPTIONS preflight requests without authentication
-        if request.method == "OPTIONS":
-            return f(*args, **kwargs)
-        
-        auth_header = request.headers.get("X-App-Secret", "")
-        if auth_header != ADMIN_SECRET:
-            logger.warning(f"Unauthorized request to {request.path} from {request.remote_addr}")
-            return jsonify({"success": False, "error": "Unauthorized"}), 401
-        return f(*args, **kwargs)
-    return wrapper
-
 def require_dashboard_auth(f):
     from functools import wraps
     @wraps(f)
@@ -393,99 +382,28 @@ CORS(flask_app, resources={
     }
 })
 
-limiter = Limiter(
-    get_remote_address,
-    app=flask_app,
-    default_limits=["200 per hour"],
-    storage_uri="memory://",
-)
-
 # ==================== API ENDPOINTS ====================
 
-@flask_app.route("/api/chat/messages/<order_id>", methods=["GET"])
-@require_admin_secret
-def get_chat_messages_api(order_id):
-    """Get all chat messages for an order"""
-    messages = get_chat_messages(order_id)
-    return jsonify({"success": True, "messages": messages})
+@flask_app.route("/api/store/location", methods=["GET"])
+def get_store_location():
+    """Return store information including KHQR image URL"""
+    return jsonify({
+        "success": True, 
+        "store": STORE_LOCATION
+    })
 
-@flask_app.route("/api/chat/send", methods=["POST"])
-@require_admin_secret
-def send_chat_message_api():
-    """Send a message from seller to customer"""
-    data = request.get_json(silent=True) or {}
-    order_id = data.get("orderId")
-    message = data.get("message")
-    
-    if not order_id or not message:
-        return jsonify({"success": False, "error": "Missing orderId or message"}), 400
-    
-    order = order_store.get(order_id)
-    if not order:
-        return jsonify({"success": False, "error": "Order not found"}), 404
-    
-    buyer_chat_id = order.get("chat_id")
-    if not buyer_chat_id:
-        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
-    
-    # Save message to storage
-    save_chat_message(order_id, "seller", message, "Bird Nest House")
-    
-    # Send to customer via Telegram
-    customer_msg = (
-        f"📨 <b>Message from Bird Nest House</b>\n\n"
-        f"<b>Order:</b> <code>{order_id}</code>\n\n"
-        f"{message}\n\n"
-        f"💡 Reply to this message to continue the conversation."
-    )
-    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
-    
-    return jsonify({"success": True})
-
-@flask_app.route("/api/chat/seller-reply", methods=["POST"])
-@require_admin_secret
-def seller_chat_reply():
-    """Handle seller reply with optional location"""
-    data = request.get_json(silent=True) or {}
-    order_id = data.get("orderId")
-    message = data.get("message")
-    send_loc = data.get("sendLocation", False)
-    
-    if not order_id:
-        return jsonify({"success": False, "error": "Missing orderId"}), 400
-    
-    order = order_store.get(order_id)
-    if not order:
-        return jsonify({"success": False, "error": "Order not found"}), 404
-    
-    buyer_chat_id = order.get("chat_id")
-    if not buyer_chat_id:
-        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
-    
-    if send_loc:
-        send_telegram_location(int(buyer_chat_id), STORE_LOCATION["latitude"], STORE_LOCATION["longitude"])
-        loc_msg = (
-            f"📍 <b>Our Store Location</b>\n\n"
-            f"🏠 <b>{STORE_LOCATION['name']}</b>\n"
-            f"📌 {STORE_LOCATION['address']}\n"
-            f"📞 {STORE_LOCATION['phone']}\n\n"
-            f"<a href='{STORE_LOCATION['map_url']}'>Open in Google Maps</a>"
-        )
-        send_telegram_message(int(buyer_chat_id), loc_msg, "HTML")
-        save_chat_message(order_id, "seller", f"📍 Store location sent: {STORE_LOCATION['address']}", "Bird Nest House")
-        return jsonify({"success": True, "locationSent": True})
-    
-    if not message:
-        return jsonify({"success": False, "error": "Missing message"}), 400
-    
-    save_chat_message(order_id, "seller", message, "Bird Nest House")
-    customer_msg = f"📨 <b>Message from Bird Nest House</b>\n\n<b>Order:</b> <code>{order_id}</code>\n\n{message}"
-    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
-    
-    return jsonify({"success": True})
+@flask_app.route("/api/khqr-image", methods=["GET"])
+def get_khqr_image():
+    """Return KHQR image URL directly"""
+    return jsonify({
+        "success": True,
+        "image_url": STORE_LOCATION["khqr_image_url"],
+        "usd_account": STORE_LOCATION["khqr_usd_account"],
+        "khr_account": STORE_LOCATION["khqr_khr_account"],
+        "account_name": STORE_LOCATION["khqr_account_name"]
+    })
 
 @flask_app.route("/api/new-order", methods=["POST", "OPTIONS"])
-@require_admin_secret
 def receive_order():
     if request.method == "OPTIONS":
         return "", 204
@@ -572,28 +490,44 @@ def receive_order():
     }
     send_telegram_message(SELLER_CHAT_ID, seller_text, "HTML", keyboard)
 
-    # Confirm to buyer
+    # Confirm to buyer with KHQR info
     if chat_id:
-        buyer_text = (
-            f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
-            f"📦 <b>Order ID:</b> <code>{order_id}</code>\n"
-            f"💰 <b>Total:</b> ${total:.2f}\n"
-            f"⭐ <b>Points Earned:</b> {points}\n\n"
-            + (
-                "⏳ Verifying your KHQR payment. Invoice will follow once confirmed."
-                if is_khqr(payment)
-                else "We will notify you when your order is ready."
+        if is_khqr(payment):
+            buyer_text = (
+                f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
+                f"📦 <b>Order ID:</b> <code>{order_id}</code>\n"
+                f"💰 <b>Total:</b> ${total:.2f}\n"
+                f"⭐ <b>Points Earned:</b> {points}\n\n"
+                f"💳 <b>KHQR Payment Instructions:</b>\n"
+                f"🏦 Bank: {KHQR_ACQUIRER}\n"
+                f"👤 Account: {KHQR_MERCHANT_NAME}\n"
+                f"🔢 USD Account: {STORE_LOCATION['khqr_usd_account']}\n"
+                f"🔢 KHR Account: {STORE_LOCATION['khqr_khr_account']}\n\n"
+                f"📱 Scan the QR code in the app to pay.\n"
+                f"⏳ We will confirm your payment shortly."
             )
-        )
+        else:
+            buyer_text = (
+                f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
+                f"📦 <b>Order ID:</b> <code>{order_id}</code>\n"
+                f"💰 <b>Total:</b> ${total:.2f}\n"
+                f"⭐ <b>Points Earned:</b> {points}\n\n"
+                f"We will notify you when your order is ready."
+            )
         send_telegram_message(int(chat_id), buyer_text, "HTML")
 
     logger.info("New order %s | customer: %s | total: $%.2f | payment: %s",
                 order_id, user_name, total, payment)
-    return jsonify({"success": True, "orderId": order_id, "storeLocation": STORE_LOCATION})
+    return jsonify({
+        "success": True, 
+        "orderId": order_id, 
+        "storeLocation": STORE_LOCATION,
+        "khqr_image_url": STORE_LOCATION["khqr_image_url"]
+    })
 
 @flask_app.route("/api/orders", methods=["GET"])
 def api_orders():
-    """Get all orders (no auth needed for dashboard after login)"""
+    """Get all orders"""
     orders = list(order_store.all().values())
     for order in orders:
         order_id = order.get("orderId")
@@ -603,7 +537,7 @@ def api_orders():
 
 @flask_app.route("/api/update-status", methods=["POST"])
 def update_status():
-    """Update order status (no auth needed for dashboard after login)"""
+    """Update order status"""
     data = request.get_json(silent=True) or {}
     order_id   = data.get("orderId")
     new_status = data.get("status")
@@ -630,62 +564,19 @@ def update_status():
 
     return jsonify({"success": True})
 
-@flask_app.route("/api/invoice/<order_id>", methods=["GET"])
-def get_invoice(order_id):
-    path = os.path.join(INVOICE_DIR, f"invoice_{order_id}.pdf")
-    if os.path.exists(path):
-        return send_file(path, as_attachment=True, download_name=f"invoice_{order_id}.pdf")
-    return jsonify({"error": "Invoice not found"}), 404
+@flask_app.route("/api/chat/messages/<order_id>", methods=["GET"])
+def get_chat_messages_api(order_id):
+    """Get all chat messages for an order"""
+    messages = get_chat_messages(order_id)
+    return jsonify({"success": True, "messages": messages})
 
-@flask_app.route("/api/khqr", methods=["POST"])
-@require_admin_secret
-def generate_khqr_endpoint():
+@flask_app.route("/api/chat/send", methods=["POST"])
+def send_chat_message_api():
+    """Send a message from seller to customer"""
     data = request.get_json(silent=True) or {}
     order_id = data.get("orderId")
-    amount   = float(data.get("amount", 0))
-    desc     = data.get("description", "")
-    if not order_id:
-        return jsonify({"success": False, "error": "Missing orderId"}), 400
-    try:
-        generate_khqr(order_id, amount, desc)
-        return jsonify({"success": True, "qrUrl": f"/api/khqr-image/{order_id}"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-@flask_app.route("/api/khqr-image/<order_id>", methods=["GET"])
-def get_khqr_image(order_id):
-    path = os.path.join(QR_DIR, f"khqr_{order_id}.png")
-    if os.path.exists(path):
-        return send_file(path, mimetype="image/png")
-    return jsonify({"error": "QR code not found"}), 404
-
-@flask_app.route("/api/khqr-instructions/<order_id>", methods=["GET"])
-def get_khqr_instructions(order_id):
-    order = order_store.get(order_id, {})
-    html = (
-        f"<div style='text-align:center;padding:20px;'>"
-        f"<h3>🇰🇭 KHQR Payment</h3>"
-        f"<table style='margin:0 auto;text-align:left;'>"
-        f"<tr><td><b>Bank:</b></td><td>{KHQR_ACQUIRER}</td></tr>"
-        f"<tr><td><b>Account Name:</b></td><td>{KHQR_MERCHANT_NAME}</td></tr>"
-        f"<tr><td><b>Account No.:</b></td><td>{KHQR_MERCHANT_ID}</td></tr>"
-        f"<tr><td><b>Amount:</b></td><td>${order.get('total', 0):.2f}</td></tr>"
-        f"<tr><td><b>Reference:</b></td><td>{order_id}</td></tr>"
-        f"</table>"
-        f"<p style='margin-top:20px;'>After payment, the seller will confirm and send your invoice.</p>"
-        f"</div>"
-    )
-    return jsonify({"success": True, "instructions": html})
-
-@flask_app.route("/api/store/location", methods=["GET"])
-def get_store_location():
-    return jsonify({"success": True, "store": STORE_LOCATION})
-
-@flask_app.route("/api/send-message", methods=["POST"])
-def send_message():
-    data    = request.get_json(silent=True) or {}
-    order_id = data.get("orderId")
     message = data.get("message")
+    
     if not order_id or not message:
         return jsonify({"success": False, "error": "Missing orderId or message"}), 400
     
@@ -698,37 +589,84 @@ def send_message():
         return jsonify({"success": False, "error": "No buyer chat ID"}), 404
     
     save_chat_message(order_id, "seller", message, "Bird Nest House")
-    ok = send_telegram_message(int(buyer_chat_id), 
-                               f"📢 *Message from Bird Nest House:*\n\n{message}", 
-                               "Markdown")
-    return jsonify({"success": ok})
-
-@flask_app.route("/api/admin/cleanup", methods=["POST"])
-@require_admin_secret
-def admin_cleanup():
-    data    = request.get_json(silent=True) or {}
-    qr_del  = cleanup_old_qr_codes(days=data.get("qrDays", QR_RETENTION_DAYS))
-    return jsonify({
-        "success":         True,
-        "qr_codes_deleted": qr_del,
-        "timestamp":       datetime.now().isoformat(),
-    })
-
-@flask_app.route("/api/admin/backup", methods=["POST"])
-@require_admin_secret
-def admin_backup():
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    orders_backup = os.path.join(BACKUP_DIR, f"orders_backup_{ts}.json")
-    with open(orders_backup, "w") as f:
-        json.dump(order_store.all(), f, indent=2)
+    customer_msg = (
+        f"📨 <b>Message from Bird Nest House</b>\n\n"
+        f"<b>Order:</b> <code>{order_id}</code>\n\n"
+        f"{message}\n\n"
+        f"💡 Reply to this message to continue the conversation."
+    )
+    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
     
-    chat_backup = os.path.join(BACKUP_DIR, f"chat_backup_{ts}.json")
-    with open(chat_backup, "w") as f:
-        json.dump(chat_store.all(), f, indent=2)
-    
-    return jsonify({"success": True, "backup_files": [orders_backup, chat_backup], "timestamp": ts})
+    return jsonify({"success": True})
 
-# ==================== DASHBOARD ====================
+@flask_app.route("/api/chat/seller-reply", methods=["POST"])
+def seller_chat_reply():
+    """Handle seller reply with optional location"""
+    data = request.get_json(silent=True) or {}
+    order_id = data.get("orderId")
+    message = data.get("message")
+    send_loc = data.get("sendLocation", False)
+    
+    if not order_id:
+        return jsonify({"success": False, "error": "Missing orderId"}), 400
+    
+    order = order_store.get(order_id)
+    if not order:
+        return jsonify({"success": False, "error": "Order not found"}), 404
+    
+    buyer_chat_id = order.get("chat_id")
+    if not buyer_chat_id:
+        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
+    
+    if send_loc:
+        send_telegram_location(int(buyer_chat_id), STORE_LOCATION["latitude"], STORE_LOCATION["longitude"])
+        loc_msg = (
+            f"📍 <b>Our Store Location</b>\n\n"
+            f"🏠 <b>{STORE_LOCATION['name']}</b>\n"
+            f"📌 {STORE_LOCATION['address']}\n"
+            f"📞 {STORE_LOCATION['phone']}\n\n"
+            f"<a href='{STORE_LOCATION['map_url']}'>Open in Google Maps</a>"
+        )
+        send_telegram_message(int(buyer_chat_id), loc_msg, "HTML")
+        save_chat_message(order_id, "seller", f"📍 Store location sent: {STORE_LOCATION['address']}", "Bird Nest House")
+        return jsonify({"success": True, "locationSent": True})
+    
+    if not message:
+        return jsonify({"success": False, "error": "Missing message"}), 400
+    
+    save_chat_message(order_id, "seller", message, "Bird Nest House")
+    customer_msg = f"📨 <b>Message from Bird Nest House</b>\n\n<b>Order:</b> <code>{order_id}</code>\n\n{message}"
+    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
+    
+    return jsonify({"success": True})
+
+@flask_app.route("/api/invoice/<order_id>", methods=["GET"])
+def get_invoice(order_id):
+    path = os.path.join(INVOICE_DIR, f"invoice_{order_id}.pdf")
+    if os.path.exists(path):
+        return send_file(path, as_attachment=True, download_name=f"invoice_{order_id}.pdf")
+    return jsonify({"error": "Invoice not found"}), 404
+
+@flask_app.route("/api/khqr-instructions/<order_id>", methods=["GET"])
+def get_khqr_instructions(order_id):
+    order = order_store.get(order_id, {})
+    html = (
+        f"<div style='text-align:center;padding:20px;'>"
+        f"<h3>🇰🇭 KHQR Payment</h3>"
+        f"<img src='{STORE_LOCATION['khqr_image_url']}' style='width:200px;height:200px;margin:10px auto;'/>"
+        f"<table style='margin:0 auto;text-align:left;'>"
+        f"<tr><td><b>Bank:</b></td><td>{KHQR_ACQUIRER}</td></tr>"
+        f"<tr><td><b>Account Name:</b></td><td>{KHQR_MERCHANT_NAME}</td></tr>"
+        f"<tr><td><b>USD Account:</b></td><td>{STORE_LOCATION['khqr_usd_account']}</td></tr>"
+        f"<tr><td><b>KHR Account:</b></td><td>{STORE_LOCATION['khqr_khr_account']}</td></tr>"
+        f"<tr><td><b>Amount:</b></td><td>${order.get('total', 0):.2f}</td></tr>"
+        f"<tr><td><b>Reference:</b></td><td>{order_id}</td></tr>"
+        f"</table>"
+        f"<p style='margin-top:20px;'>After payment, the seller will confirm and send your invoice.</p>"
+        f"</div>"
+    )
+    return jsonify({"success": True, "instructions": html})
+
 @flask_app.route("/dashboard", methods=["GET", "POST"])
 def dashboard():
     if request.method == "POST":
@@ -822,6 +760,7 @@ def health():
         "orders_count":  len(order_store),
         "chat_messages": sum(len(v) for v in chat_store.all().values()),
         "store":         STORE_LOCATION["name"],
+        "khqr_available": bool(STORE_LOCATION.get("khqr_image_url")),
         "cleanup": {
             "chat_retention_days": CHAT_RETENTION_DAYS,
             "qr_retention_days":   QR_RETENTION_DAYS,
@@ -849,6 +788,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ Halal, GHPs/HACCP Certified | 🏆 5S & Kaizen\n\n"
         "<b>Features:</b>\n"
         "• Place orders easily\n"
+        "• Pay with KHQR (ABA Bank)\n"
         "• Share your location for delivery\n"
         "• Get store location instantly\n"
         "• Chat with seller about your order\n\n"
@@ -898,6 +838,8 @@ async def handle_webapp_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     except json.JSONDecodeError:
         await update.message.reply_text("Error processing order data. Please try again.")
         return
+
+    logger.info(f"Received order from bot: {data.get('orderId', 'unknown')}")
 
     user_id   = str(data.get("userId", update.effective_chat.id))
     user_name = data.get("userName", update.effective_user.first_name or "Guest")
@@ -975,18 +917,29 @@ async def handle_webapp_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error("Seller notification failed: %s", e)
 
-    confirm_text = (
-        f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
-        f"📦 <b>Order ID:</b> <code>{order_id}</code>\n"
-        f"💰 <b>Total:</b> ${total:.2f}\n"
-        f"⭐ <b>Points Earned:</b> {points}\n\n"
-        + (
-            "⏳ Verifying KHQR payment. Invoice will be sent once confirmed.\n\n"
-            "💬 You can chat with the seller about your order."
-            if is_khqr(payment)
-            else "We will notify you when your order is ready.\n\n💬 You can chat with the seller about your order."
+    if is_khqr(payment):
+        confirm_text = (
+            f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
+            f"📦 <b>Order ID:</b> <code>{order_id}</code>\n"
+            f"💰 <b>Total:</b> ${total:.2f}\n"
+            f"⭐ <b>Points Earned:</b> {points}\n\n"
+            f"💳 <b>KHQR Payment:</b>\n"
+            f"🏦 Bank: {KHQR_ACQUIRER}\n"
+            f"👤 Account: {KHQR_MERCHANT_NAME}\n"
+            f"🔢 USD: {STORE_LOCATION['khqr_usd_account']}\n\n"
+            f"📱 Scan the QR code in the app to pay.\n"
+            f"⏳ We will confirm your payment shortly.\n\n"
+            f"💬 You can chat with the seller about your order."
         )
-    )
+    else:
+        confirm_text = (
+            f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
+            f"📦 <b>Order ID:</b> <code>{order_id}</code>\n"
+            f"💰 <b>Total:</b> ${total:.2f}\n"
+            f"⭐ <b>Points Earned:</b> {points}\n\n"
+            f"We will notify you when your order is ready.\n\n"
+            f"💬 You can chat with the seller about your order."
+        )
     await update.message.reply_text(confirm_text, parse_mode="HTML")
     logger.info("Bot order %s processed — %s $%.2f", order_id, payment, total)
 
@@ -1315,7 +1268,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"📦 Orders: {len(order_store)}\n"
         f"💬 Chat sessions: {len([k for k in chat_store.all().keys() if k.startswith('chat_')])}\n"
-        f"🏠 Store: {STORE_LOCATION['name']}",
+        f"🏠 Store: {STORE_LOCATION['name']}\n"
+        f"🇰🇭 KHQR: {'✅' if STORE_LOCATION.get('khqr_image_url') else '❌'}",
         parse_mode="HTML",
     )
 
@@ -1352,6 +1306,7 @@ if __name__ == "__main__":
     print(f"Store  : {STORE_LOCATION['name']}")
     print(f"Web App: {WEB_APP_URL}")
     print(f"Dashboard: http://localhost:{os.environ.get('PORT', 5000)}/dashboard")
+    print(f"KHQR Image: {'✅ Loaded' if STORE_LOCATION.get('khqr_image_url') else '❌ Missing'}")
     print(f"Cleanup: {'enabled' if AUTO_CLEANUP_ENABLED else 'disabled'} every {CLEANUP_INTERVAL_HOURS}h")
     print("=" * 60)
 
