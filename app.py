@@ -1,6 +1,6 @@
 """
 Bird Nest House — Telegram Bot + Flask Backend
-Complete working version with KHQR integration
+Complete working version with KHQR integration and chat functionality
 """
 
 import fcntl
@@ -403,6 +403,85 @@ def get_khqr_image():
         "account_name": STORE_LOCATION["khqr_account_name"]
     })
 
+@flask_app.route("/api/chat/messages/<order_id>", methods=["GET"])
+def get_chat_messages_api(order_id):
+    """Get all chat messages for an order"""
+    messages = get_chat_messages(order_id)
+    return jsonify({"success": True, "messages": messages})
+
+@flask_app.route("/api/chat/send", methods=["POST"])
+def send_chat_message():
+    """Send a message from seller to customer"""
+    data = request.get_json(silent=True) or {}
+    order_id = data.get("orderId")
+    message = data.get("message")
+    
+    if not order_id or not message:
+        return jsonify({"success": False, "error": "Missing orderId or message"}), 400
+    
+    order = order_store.get(order_id)
+    if not order:
+        return jsonify({"success": False, "error": "Order not found"}), 404
+    
+    buyer_chat_id = order.get("chat_id")
+    if not buyer_chat_id:
+        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
+    
+    # Save message to storage
+    save_chat_message(order_id, "seller", message, "Bird Nest House")
+    
+    # Send to customer via Telegram
+    customer_msg = (
+        f"📨 <b>Message from Bird Nest House</b>\n\n"
+        f"<b>Order:</b> <code>{order_id}</code>\n\n"
+        f"{message}\n\n"
+        f"💡 Reply to this message to continue the conversation."
+    )
+    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
+    
+    return jsonify({"success": True, "message": "Sent successfully"})
+
+@flask_app.route("/api/chat/seller-reply", methods=["POST"])
+def seller_chat_reply():
+    """Handle seller reply with optional location"""
+    data = request.get_json(silent=True) or {}
+    order_id = data.get("orderId")
+    message = data.get("message")
+    send_loc = data.get("sendLocation", False)
+    
+    if not order_id:
+        return jsonify({"success": False, "error": "Missing orderId"}), 400
+    
+    order = order_store.get(order_id)
+    if not order:
+        return jsonify({"success": False, "error": "Order not found"}), 404
+    
+    buyer_chat_id = order.get("chat_id")
+    if not buyer_chat_id:
+        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
+    
+    if send_loc:
+        send_telegram_location(int(buyer_chat_id), STORE_LOCATION["latitude"], STORE_LOCATION["longitude"])
+        loc_msg = (
+            f"📍 <b>Our Store Location</b>\n\n"
+            f"🏠 <b>{STORE_LOCATION['name']}</b>\n"
+            f"📌 {STORE_LOCATION['address']}\n"
+            f"📞 {STORE_LOCATION['phone']}\n\n"
+            f"<a href='{STORE_LOCATION['map_url']}'>Open in Google Maps</a>"
+        )
+        send_telegram_message(int(buyer_chat_id), loc_msg, "HTML")
+        save_chat_message(order_id, "seller", f"📍 Store location sent: {STORE_LOCATION['address']}", "Bird Nest House")
+        return jsonify({"success": True, "locationSent": True})
+    
+    if not message:
+        return jsonify({"success": False, "error": "Missing message"}), 400
+    
+    save_chat_message(order_id, "seller", message, "Bird Nest House")
+    customer_msg = f"📨 <b>Message from Bird Nest House</b>\n\n<b>Order:</b> <code>{order_id}</code>\n\n{message}"
+    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
+    
+    return jsonify({"success": True, "message": "Reply sent"})
+
 @flask_app.route("/api/new-order", methods=["POST", "OPTIONS"])
 def receive_order():
     if request.method == "OPTIONS":
@@ -562,82 +641,6 @@ def update_status():
         send_telegram_message(int(buyer_chat_id),
                               f"📦 Order #{order_id}\n\n{status_msgs[new_status]}")
 
-    return jsonify({"success": True})
-
-@flask_app.route("/api/chat/messages/<order_id>", methods=["GET"])
-def get_chat_messages_api(order_id):
-    """Get all chat messages for an order"""
-    messages = get_chat_messages(order_id)
-    return jsonify({"success": True, "messages": messages})
-
-@flask_app.route("/api/chat/send", methods=["POST"])
-def send_chat_message_api():
-    """Send a message from seller to customer"""
-    data = request.get_json(silent=True) or {}
-    order_id = data.get("orderId")
-    message = data.get("message")
-    
-    if not order_id or not message:
-        return jsonify({"success": False, "error": "Missing orderId or message"}), 400
-    
-    order = order_store.get(order_id)
-    if not order:
-        return jsonify({"success": False, "error": "Order not found"}), 404
-    
-    buyer_chat_id = order.get("chat_id")
-    if not buyer_chat_id:
-        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
-    
-    save_chat_message(order_id, "seller", message, "Bird Nest House")
-    customer_msg = (
-        f"📨 <b>Message from Bird Nest House</b>\n\n"
-        f"<b>Order:</b> <code>{order_id}</code>\n\n"
-        f"{message}\n\n"
-        f"💡 Reply to this message to continue the conversation."
-    )
-    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
-    
-    return jsonify({"success": True})
-
-@flask_app.route("/api/chat/seller-reply", methods=["POST"])
-def seller_chat_reply():
-    """Handle seller reply with optional location"""
-    data = request.get_json(silent=True) or {}
-    order_id = data.get("orderId")
-    message = data.get("message")
-    send_loc = data.get("sendLocation", False)
-    
-    if not order_id:
-        return jsonify({"success": False, "error": "Missing orderId"}), 400
-    
-    order = order_store.get(order_id)
-    if not order:
-        return jsonify({"success": False, "error": "Order not found"}), 404
-    
-    buyer_chat_id = order.get("chat_id")
-    if not buyer_chat_id:
-        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
-    
-    if send_loc:
-        send_telegram_location(int(buyer_chat_id), STORE_LOCATION["latitude"], STORE_LOCATION["longitude"])
-        loc_msg = (
-            f"📍 <b>Our Store Location</b>\n\n"
-            f"🏠 <b>{STORE_LOCATION['name']}</b>\n"
-            f"📌 {STORE_LOCATION['address']}\n"
-            f"📞 {STORE_LOCATION['phone']}\n\n"
-            f"<a href='{STORE_LOCATION['map_url']}'>Open in Google Maps</a>"
-        )
-        send_telegram_message(int(buyer_chat_id), loc_msg, "HTML")
-        save_chat_message(order_id, "seller", f"📍 Store location sent: {STORE_LOCATION['address']}", "Bird Nest House")
-        return jsonify({"success": True, "locationSent": True})
-    
-    if not message:
-        return jsonify({"success": False, "error": "Missing message"}), 400
-    
-    save_chat_message(order_id, "seller", message, "Bird Nest House")
-    customer_msg = f"📨 <b>Message from Bird Nest House</b>\n\n<b>Order:</b> <code>{order_id}</code>\n\n{message}"
-    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
-    
     return jsonify({"success": True})
 
 @flask_app.route("/api/invoice/<order_id>", methods=["GET"])
