@@ -3,4 +3,8 @@ python-dotenv==1.0.0
 Flask==2.3.3
 gunicorn==21.2.0
 reportlab==4.2.5
-flask-cors
+flask-cors==4.0.0
+qrcode==7.4.2
+Pillow==10.0.0
+requests==2.31.0
+flask-limiter==3.5.0

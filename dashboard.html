@@ -1,348 +1,191 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Bird Nest House – Seller Dashboard</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bird Nest House - Admin Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--tg-theme-bg-color, #ffffff);
-            color: var(--tg-theme-text-color, #000000);
-            padding: 20px;
-            transition: background 0.2s, color 0.2s;
-        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
         .container { max-width: 1200px; margin: 0 auto; }
-        h1, h2, h3 { margin-bottom: 15px; }
-        .filters {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-bottom: 20px;
-            align-items: center;
-        }
-        .filters input, .filters button {
-            padding: 8px 12px;
-            border-radius: 20px;
-            border: 1px solid #ddd;
-            background: var(--tg-theme-bg-color, white);
-            color: var(--tg-theme-text-color, black);
-        }
-        .filters button {
-            background: var(--tg-theme-button-color, #ff6b00);
-            color: var(--tg-theme-button-text-color, white);
-            border: none;
-            cursor: pointer;
-        }
-        .segmentation {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        .seg-box {
-            flex: 1;
-            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            border-radius: 16px;
-            padding: 15px;
-        }
-        .seg-box div {
-            padding: 5px 0;
-            border-bottom: 1px solid #ddd;
-        }
-        canvas { margin-bottom: 20px; max-width: 100%; }
-        .order-card {
-            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            border-radius: 16px;
-            padding: 16px;
-            margin-bottom: 16px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        .status { font-weight: bold; }
-        .status-btn {
-            background: var(--tg-theme-button-color, #ff6b00);
-            color: var(--tg-theme-button-text-color, white);
-            border: none;
-            padding: 6px 12px;
-            border-radius: 20px;
-            margin: 4px;
-            cursor: pointer;
-        }
-        .refresh-btn {
-            background: var(--tg-theme-button-color, #ff6b00);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 20px;
-            cursor: pointer;
-        }
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid var(--tg-theme-button-color, #ff6b00);
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        button { margin-top: 5px; }
+        .header { background: linear-gradient(135deg, #ff6b00 0%, #e65100 100%); color: white; padding: 20px; border-radius: 15px; margin-bottom: 20px; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: white; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .stat-value { font-size: 2rem; font-weight: bold; color: #ff6b00; }
+        .orders-table { background: white; border-radius: 15px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; color: #333; }
+        .status { padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; display: inline-block; }
+        .status-pending { background: #ffc107; color: #333; }
+        .status-paid { background: #28a745; color: white; }
+        .status-ready { background: #17a2b8; color: white; }
+        .btn { padding: 6px 12px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+        .btn-primary { background: #ff6b00; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .chat-box { position: fixed; bottom: 20px; right: 20px; width: 350px; background: white; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; }
+        .chat-header { background: #ff6b00; color: white; padding: 12px; border-radius: 15px 15px 0 0; cursor: pointer; }
+        .chat-messages { height: 300px; overflow-y: auto; padding: 12px; }
+        .chat-input { display: flex; padding: 12px; border-top: 1px solid #eee; }
+        .chat-input input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 8px; margin-right: 8px; }
+        .refresh-btn { background: #ff6b00; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; }
     </style>
 </head>
 <body>
-<div class="container">
-    <h1>📦 Orders & CRM</h1>
-    <div class="filters">
-        <input type="date" id="dateFrom" placeholder="From">
-        <input type="date" id="dateTo" placeholder="To">
-        <input type="number" id="minTotal" placeholder="Min total ($)" step="1">
-        <input type="text" id="customerSearch" placeholder="Customer name">
-        <button onclick="applyFilters()">Apply Filters</button>
-        <button onclick="exportToCSV()">📥 Export CSV</button>
-        <button onclick="loadOrders()" class="refresh-btn">🔄 Refresh</button>
-    </div>
-    <div class="segmentation">
-        <div class="seg-box">
-            <h3>🏆 Top Spenders</h3>
-            <div id="topSpendersList">Loading...</div>
+    <div class="container">
+        <div class="header">
+            <h1>🐦 Bird Nest House Admin Dashboard</h1>
+            <p>Manage orders, chat with customers, and track deliveries</p>
         </div>
-        <div class="seg-box">
-            <h3>🔄 Frequent Buyers</h3>
-            <div id="frequentBuyersList">Loading...</div>
+        
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-value" id="totalOrders">0</div>
+                <div>Total Orders</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="pendingOrders">0</div>
+                <div>Pending</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="paidOrders">0</div>
+                <div>Paid</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="readyOrders">0</div>
+                <div>Ready</div>
+            </div>
+        </div>
+        
+        <button class="refresh-btn" onclick="loadOrders()">🔄 Refresh Orders</button>
+        
+        <div class="orders-table">
+            <table id="ordersTable">
+                <thead>
+                    <tr><th>Order ID</th><th>Customer</th><th>Total</th><th>Payment</th><th>Status</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="ordersBody">
+                    <tr><td colspan="6" style="text-align:center;">Loading orders...</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
-    <canvas id="revenueChart" width="400" height="200"></canvas>
-    <div id="ordersContainer"></div>
-</div>
-
-<script>
-    const tg = window.Telegram.WebApp;
-    tg.expand();
-    tg.BackButton.show();
-    tg.BackButton.onClick(() => tg.close());
-
-    const password = prompt("Enter dashboard password:");
-    if (password !== "@admin123") {
-        document.body.innerHTML = "<h2>Unauthorized</h2>";
-        throw new Error("Unauthorized");
-    }
-
-    let allOrders = [];
-    let revenueChart = null;
-
-    async function loadOrders() {
-        const container = document.getElementById('ordersContainer');
-        container.innerHTML = '<div class="spinner"></div>';
-        try {
-            const response = await fetch('/api/orders');
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const orders = await response.json();
-            console.log('Orders loaded:', orders.length);
-            // Convert total to number for each order
-            orders.forEach(order => {
-                order.total = parseFloat(order.total) || 0;
-            });
-            allOrders = orders;
-            allOrders.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-            applyFilters();
-        } catch (error) {
-            console.error('Fetch error:', error);
-            container.innerHTML = `<p>Error loading orders: ${error.message}. Ensure the bot is running and you have placed at least one order.</p>`;
-        }
-    }
-
-    function applyFilters() {
-        const dateFrom = document.getElementById('dateFrom').value;
-        const dateTo = document.getElementById('dateTo').value;
-        const minTotal = parseFloat(document.getElementById('minTotal').value) || 0;
-        const customerSearch = document.getElementById('customerSearch').value.toLowerCase();
-
-        let filtered = allOrders.filter(order => {
-            if (dateFrom && new Date(order.timestamp) < new Date(dateFrom)) return false;
-            if (dateTo && new Date(order.timestamp) > new Date(dateTo)) return false;
-            if (order.total < minTotal) return false;
-            if (customerSearch && !order.user_name.toLowerCase().includes(customerSearch)) return false;
-            return true;
-        });
-        renderOrders(filtered);
-        updateChart(filtered);
-        renderSegmentation(filtered);
-    }
-
-    function renderOrders(orders) {
-        const container = document.getElementById('ordersContainer');
-        if (orders.length === 0) {
-            container.innerHTML = '<p>No orders match filters.</p>';
-            return;
-        }
-        container.innerHTML = '';
-        orders.forEach(order => {
-            const div = document.createElement('div');
-            div.className = 'order-card';
-            div.innerHTML = `
-                <div><strong>${escapeHtml(order.user_name)}</strong> (${order.user_id})</div>
-                <div>Total: $${order.total.toFixed(2)}</div>
-                <div>Status: <span class="status">${order.status || 'Pending'}</span></div>
-                <div>Payment: ${order.paymentMethod || 'N/A'}</div>
-                <div>Time: ${new Date(order.timestamp).toLocaleString()}</div>
-                <div>
-                    <button class="status-btn" data-id="${order.orderId}" data-status="Preparing">🔄 Preparing</button>
-                    <button class="status-btn" data-id="${order.orderId}" data-status="Ready">✅ Ready</button>
-                    <button class="status-btn" data-id="${order.orderId}" data-status="Completed">🏁 Completed</button>
-                </div>
-            `;
-            container.appendChild(div);
-        });
-        // Attach status button handlers
-        document.querySelectorAll('.status-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const orderId = btn.dataset.id;
-                const newStatus = btn.dataset.status;
-                try {
-                    const response = await fetch('/api/update-status', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ orderId, status: newStatus })
-                    });
-                    const result = await response.json();
-                    if (result.success) {
-                        tg.showAlert(`Order ${orderId} marked as ${newStatus}.`);
-                        loadOrders();
-                    } else {
-                        tg.showAlert(`Failed: ${result.error}`);
-                    }
-                } catch (error) {
-                    tg.showAlert('Error updating status');
-                }
-            });
-        });
-    }
-
-    function computeSegmentation(orders) {
-        const customerMap = new Map();
-        orders.forEach(order => {
-            const userId = order.user_id;
-            const total = order.total; // already a number
-            if (!customerMap.has(userId)) {
-                customerMap.set(userId, {
-                    name: order.user_name,
-                    totalSpent: 0,
-                    orderCount: 0,
-                    chatId: order.chat_id
-                });
-            }
-            const cust = customerMap.get(userId);
-            cust.totalSpent += total;
-            cust.orderCount += 1;
-        });
-        const customers = Array.from(customerMap.values());
-        const topSpenders = [...customers].sort((a,b) => b.totalSpent - a.totalSpent).slice(0, 10);
-        const frequentBuyers = [...customers].sort((a,b) => b.orderCount - a.orderCount).slice(0, 10);
-        return { topSpenders, frequentBuyers };
-    }
-
-    function renderSegmentation(orders) {
-        const { topSpenders, frequentBuyers } = computeSegmentation(orders);
-        const topDiv = document.getElementById('topSpendersList');
-        topDiv.innerHTML = topSpenders.map(c => `
-            <div>
-                <strong>${escapeHtml(c.name)}</strong> - $${c.totalSpent.toFixed(2)} (${c.orderCount} orders)
-                <button onclick="sendMessageToCustomer('${c.chatId}', '${escapeHtml(c.name)}')">💬</button>
-            </div>
-        `).join('');
-        const freqDiv = document.getElementById('frequentBuyersList');
-        freqDiv.innerHTML = frequentBuyers.map(c => `
-            <div>
-                <strong>${escapeHtml(c.name)}</strong> - ${c.orderCount} orders ($${c.totalSpent.toFixed(2)})
-                <button onclick="sendMessageToCustomer('${c.chatId}', '${escapeHtml(c.name)}')">💬</button>
-            </div>
-        `).join('');
-    }
-
-    async function sendMessageToCustomer(chatId, customerName) {
-        const message = prompt(`Message to ${customerName}:`);
-        if (message && message.trim()) {
+    
+    <div class="chat-box" id="chatBox">
+        <div class="chat-header" onclick="toggleChat()">💬 Customer Chat</div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input">
+            <input type="text" id="chatInput" placeholder="Type your message...">
+            <button onclick="sendMessage()" class="btn btn-primary">Send</button>
+        </div>
+    </div>
+    
+    <script>
+        let currentOrderId = null;
+        
+        async function loadOrders() {
             try {
-                const response = await fetch('/api/send-message', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chatId, message })
-                });
-                const result = await response.json();
-                if (result.success) {
-                    tg.showAlert('Message sent!');
-                } else {
-                    tg.showAlert('Failed to send: ' + result.error);
-                }
-            } catch (error) {
-                tg.showAlert('Network error');
+                const response = await fetch('/api/orders');
+                const orders = await response.json();
+                
+                document.getElementById('totalOrders').textContent = orders.length;
+                document.getElementById('pendingOrders').textContent = orders.filter(o => o.status.includes('Pending')).length;
+                document.getElementById('paidOrders').textContent = orders.filter(o => o.status === 'Paid').length;
+                document.getElementById('readyOrders').textContent = orders.filter(o => o.status === 'Ready').length;
+                
+                const tbody = document.getElementById('ordersBody');
+                tbody.innerHTML = orders.map(order => `
+                    <tr>
+                        <td><code>${order.orderId}</code></td>
+                        <td>${order.user_name}</td>
+                        <td>$${order.total}</td>
+                        <td>${order.paymentMethod}</td>
+                        <td><span class="status status-${order.status.toLowerCase().includes('pending') ? 'pending' : order.status.toLowerCase()}">${order.status}</span></td>
+                        <td>
+                            <button class="btn btn-primary" onclick="openChat('${order.orderId}', '${order.user_name}')">💬 Chat</button>
+                            <button class="btn btn-primary" onclick="updateStatus('${order.orderId}', 'Paid')">✅ Paid</button>
+                            <button class="btn btn-primary" onclick="updateStatus('${order.orderId}', 'Ready')">📦 Ready</button>
+                            <button class="btn btn-primary" onclick="sendLocation('${order.orderId}')">📍 Location</button>
+                            <button class="btn btn-danger" onclick="downloadInvoice('${order.orderId}')">📄 Invoice</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch(e) {
+                console.error('Failed to load orders:', e);
             }
         }
-    }
-
-    function updateChart(orders) {
-        const last7Days = [...Array(7).keys()].map(i => {
-            const d = new Date();
-            d.setDate(d.getDate() - i);
-            return d.toISOString().split('T')[0];
-        }).reverse();
-        const dailyTotal = last7Days.map(date => {
-            return orders.filter(o => o.timestamp.startsWith(date))
-                         .reduce((sum, o) => sum + o.total, 0);
-        });
-        const ctx = document.getElementById('revenueChart').getContext('2d');
-        if (revenueChart) revenueChart.destroy();
-        revenueChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: last7Days,
-                datasets: [{
-                    label: 'Revenue ($)',
-                    data: dailyTotal,
-                    borderColor: '#ff6b00',
-                    backgroundColor: 'rgba(255,107,0,0.1)',
-                    fill: true
-                }]
-            },
-            options: { responsive: true, maintainAspectRatio: true }
-        });
-    }
-
-    function exportToCSV() {
-        let data = allOrders;
-        let csvRows = [["Order ID", "Customer", "Total", "Status", "Payment", "Date"]];
-        data.forEach(order => {
-            csvRows.push([
-                order.orderId,
-                order.user_name,
-                order.total,
-                order.status || 'Pending',
-                order.paymentMethod || 'N/A',
-                new Date(order.timestamp).toLocaleString()
-            ]);
-        });
-        const csvContent = csvRows.map(row => row.join(",")).join("\n");
-        const blob = new Blob([csvContent], { type: 'text/csv' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `orders_${new Date().toISOString().split('T')[0]}.csv`;
-        link.click();
-    }
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        return str.replace(/[&<>]/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            return m;
-        });
-    }
-
-    loadOrders();
-    setInterval(loadOrders, 30000);
-</script>
+        
+        async function updateStatus(orderId, status) {
+            const response = await fetch('/api/update-status', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({orderId, status})
+            });
+            if (response.ok) {
+                alert(`Order ${orderId} marked as ${status}`);
+                loadOrders();
+            }
+        }
+        
+        async function openChat(orderId, customerName) {
+            currentOrderId = orderId;
+            document.getElementById('chatBox').style.display = 'block';
+            document.querySelector('.chat-header').innerHTML = `💬 Chat with ${customerName} (${orderId})`;
+            
+            const response = await fetch(`/api/chat/sessions/${orderId}`);
+            const data = await response.json();
+            
+            const messagesDiv = document.getElementById('chatMessages');
+            if (data.success && data.messages) {
+                messagesDiv.innerHTML = data.messages.map(msg => `
+                    <div style="margin-bottom: 10px; text-align: ${msg.sender === 'buyer' ? 'left' : 'right'}">
+                        <strong>${msg.sender === 'buyer' ? '👤 Customer' : '🛒 You'}:</strong><br>
+                        <span style="background: ${msg.sender === 'buyer' ? '#e9ecef' : '#ff6b00'}; color: ${msg.sender === 'buyer' ? '#000' : '#fff'}; padding: 8px 12px; border-radius: 12px; display: inline-block; max-width: 80%;">
+                            ${msg.message}
+                        </span>
+                        <div style="font-size: 0.7rem; color: #888;">${new Date(msg.timestamp).toLocaleTimeString()}</div>
+                    </div>
+                `).join('');
+            }
+        }
+        
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message || !currentOrderId) return;
+            
+            const response = await fetch('/api/chat/seller-reply', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-App-Secret': '${ADMIN_SECRET}'},
+                body: JSON.stringify({orderId: currentOrderId, message})
+            });
+            
+            if (response.ok) {
+                input.value = '';
+                openChat(currentOrderId, '');
+            }
+        }
+        
+        async function sendLocation(orderId) {
+            const response = await fetch('/api/chat/seller-reply', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-App-Secret': '${ADMIN_SECRET}'},
+                body: JSON.stringify({orderId, sendLocation: true})
+            });
+            if (response.ok) alert('Location sent to customer!');
+        }
+        
+        function downloadInvoice(orderId) {
+            window.open(`/api/invoice/${orderId}`, '_blank');
+        }
+        
+        function toggleChat() {
+            const box = document.getElementById('chatBox');
+            box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        loadOrders();
+        setInterval(loadOrders, 30000);
+    </script>
 </body>
 </html>

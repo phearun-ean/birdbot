@@ -1,646 +1,1139 @@
-import logging
-import json
-import os
-import threading
-import urllib.request
-import urllib.error
-import time
-from datetime import datetime
-from typing import Dict, Any
-from telegram import (
-    Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo,
-    InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonDefault
-)
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters,
-    ContextTypes, CallbackQueryHandler
-)
-from flask import Flask, request, session, redirect, url_for, send_from_directory, jsonify, send_file
-from flask_cors import CORS
-import secrets
-from dotenv import load_dotenv
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_CENTER
-
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SELLER_CHAT_ID = 455774531
-YOUR_WEB_APP_URL = "https://birdnesttgminiapp.web.app/"
+"""
+Bird Nest House — Telegram Bot + Flask Backend
+Rewritten for security, reliability, and clean architecture.
+"""
 
 import fcntl
+import json
+import logging
+import os
+import secrets
 import sys
+import threading
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-lock_file = open("bot.lock", "w")
-try:
-    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except:
-    print("Another bot instance is already running!")
-    sys.exit(0)
+import qrcode
+import requests
+from dotenv import load_dotenv
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory, session, url_for
+from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+    WebAppInfo,
+)
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-logging.basicConfig(level=logging.INFO)
+load_dotenv()
+
+# ==================== LOGGING ====================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger(__name__)
+
+# ==================== CONFIGURATION ====================
+def _require_env(key: str, fallback: str = None) -> str:
+    """Return env var or raise clearly if it is missing and no fallback is given."""
+    val = os.getenv(key, fallback)
+    if val is None:
+        raise RuntimeError(
+            f"Required environment variable '{key}' is not set. "
+            "Add it to your .env file and restart."
+        )
+    return val
+
+
+BOT_TOKEN         = _require_env("BOT_TOKEN")
+SELLER_CHAT_ID    = int(_require_env("SELLER_CHAT_ID", "5131306408"))
+WEB_APP_URL       = _require_env("WEB_APP_URL", "https://birdnesttgminiapp.web.app/")
+APP_SECRET        = _require_env("APP_SECRET")          # NO fallback — must be set
+ADMIN_SECRET      = _require_env("ADMIN_SECRET")        # NO fallback — must be set
+ADMIN_PASSWORD    = _require_env("DASHBOARD_PASSWORD")  # NO fallback — must be set
+FLASK_SECRET_KEY  = _require_env("FLASK_SECRET_KEY", secrets.token_hex(32))
+
+STORE_LOCATION = {
+    "name":      _require_env("STORE_NAME", "Bird Nest House"),
+    "address":   _require_env("STORE_ADDRESS", "281 Street, Phnom Penh, Cambodia"),
+    "latitude":  float(_require_env("STORE_LATITUDE", "11.58145")),
+    "longitude": float(_require_env("STORE_LONGITUDE", "104.90451")),
+    "phone":     _require_env("STORE_PHONE", "+855 78 999 685"),
+}
+STORE_LOCATION["map_url"] = (
+    f"https://maps.google.com/?q={STORE_LOCATION['latitude']},{STORE_LOCATION['longitude']}"
+)
+
+KHQR_MERCHANT_ID   = _require_env("KHQR_MERCHANT_ID", "000158431")
+KHQR_MERCHANT_NAME = _require_env("KHQR_MERCHANT_NAME", "Phearun Ean")
+KHQR_ACQUIRER      = _require_env("KHQR_ACQUIRER", "ABA")
+
+CHAT_RETENTION_DAYS    = int(_require_env("CHAT_RETENTION_DAYS", "30"))
+QR_RETENTION_DAYS      = int(_require_env("QR_RETENTION_DAYS", "7"))
+AUTO_CLEANUP_ENABLED   = _require_env("AUTO_CLEANUP_ENABLED", "true").lower() == "true"
+CLEANUP_INTERVAL_HOURS = int(_require_env("CLEANUP_INTERVAL_HOURS", "24"))
 
 INVOICE_DIR = "invoices"
-os.makedirs(INVOICE_DIR, exist_ok=True)
-
-def generate_invoice(order_data: dict) -> str:
-    order_id = order_data.get('orderId')
-    filename = f"{INVOICE_DIR}/invoice_{order_id}.pdf"
-    doc = SimpleDocTemplate(filename, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], alignment=TA_CENTER, textColor=colors.orange)
-    story = []
-    story.append(Paragraph("Bird Nest House", title_style))
-    story.append(Paragraph("Official Invoice", styles['Heading2']))
-    story.append(Spacer(1, 0.2*inch))
-    story.append(Paragraph(f"Order ID: {order_id}", styles['Normal']))
-    story.append(Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
-    story.append(Paragraph(f"Customer: {order_data.get('user_name', 'N/A')}", styles['Normal']))
-    story.append(Paragraph(f"Payment Method: {order_data.get('paymentMethod', 'N/A')}", styles['Normal']))
-    story.append(Spacer(1, 0.2*inch))
-    items_data = [["Item", "Quantity", "Unit Price", "Total"]]
-    for item in order_data.get('items', []):
-        qty = item.get('quantity', 1)
-        price = item.get('price', 0)
-        items_data.append([item.get('name', '?'), str(qty), f"${price:.2f}", f"${price * qty:.2f}"])
-    if order_data.get('discountApplied', 0) > 0:
-        items_data.append(["Discount", "", "", f"-${order_data['discountApplied']:.2f}"])
-    items_data.append(["", "", "Subtotal:", f"${order_data.get('total', 0) + order_data.get('discountApplied', 0):.2f}"])
-    items_data.append(["", "", "Total:", f"${order_data.get('total', 0):.2f}"])
-    table = Table(items_data, colWidths=[3*inch, 1*inch, 1.5*inch, 1.5*inch])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),
-    ]))
-    story.append(table)
-    story.append(Spacer(1, 0.3*inch))
-    story.append(Paragraph("Thank you for shopping at Bird Nest House!", styles['Normal']))
-    story.append(Paragraph("For support, contact us on Telegram.", styles['Normal']))
-    doc.build(story)
-    return filename
-
+QR_DIR      = "qr_codes"
+BACKUP_DIR  = "backups"
 ORDERS_FILE = "orders.json"
 
-def load_orders() -> Dict[str, Any]:
-    if os.path.exists(ORDERS_FILE):
+for _d in (INVOICE_DIR, QR_DIR, BACKUP_DIR):
+    os.makedirs(_d, exist_ok=True)
+
+# ==================== SINGLE-INSTANCE LOCK ====================
+_lock_file = open("bot.lock", "w")
+try:
+    fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except (IOError, BlockingIOError):
+    logger.error("Another bot instance is already running — exiting.")
+    sys.exit(1)
+
+# ==================== THREAD-SAFE JSON STORAGE ====================
+class JsonStore:
+    """Simple thread-safe key/value store backed by a single JSON file."""
+
+    def __init__(self, filepath: str):
+        self._path = filepath
+        self._lock = threading.RLock()
+        self._data: Dict[str, Any] = {}
+        self._load()
+
+    def _load(self):
+        if os.path.exists(self._path):
+            try:
+                with open(self._path, "r") as f:
+                    self._data = json.load(f)
+            except Exception as e:
+                logger.error("Failed to load %s: %s", self._path, e)
+                self._data = {}
+
+    def _save(self):
         try:
-            with open(ORDERS_FILE, 'r') as f:
-                return json.load(f)
+            tmp = self._path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self._data, f, indent=2)
+            os.replace(tmp, self._path)  # atomic on POSIX
         except Exception as e:
-            logging.error(f"Failed to load orders: {e}")
-    return {}
+            logger.error("Failed to save %s: %s", self._path, e)
 
-def save_orders(orders: Dict[str, Any]) -> None:
-    try:
-        with open(ORDERS_FILE, 'w') as f:
-            json.dump(orders, f, indent=2)
-    except Exception as e:
-        logging.error(f"Failed to save orders: {e}")
+    def get(self, key: str, default=None):
+        with self._lock:
+            return self._data.get(key, default)
 
-order_storage = load_orders()
+    def set(self, key: str, value: Any):
+        with self._lock:
+            self._data[key] = value
+            self._save()
 
-def send_seller_notification_sync(order_id: str, order: dict, source: str = "Web"):
-    items_text = "\n".join([
-        f"  • {i.get('name','?')} x{i.get('quantity', i.get('qty', 1))} — ${float(i.get('price', 0)):.2f}"
-        for i in order.get('items', [])
-    ])
-    customer_info = f"👤 <b>Customer:</b> {order.get('user_name', 'Guest')}\n"
-    username = order.get('username', '')
-    if username:
-        customer_info += f"🆔 <b>Username:</b> @{username}\n"
-    customer_info += f"🔢 <b>User ID:</b> <code>{order.get('user_id', '?')}</code>\n"
-    first_name = order.get('first_name', '')
-    last_name  = order.get('last_name', '')
-    if first_name:
-        customer_info += f"📛 <b>Name:</b> {first_name} {last_name}\n"
-    order_text = (
-        f"🆕 <b>NEW ORDER (via {source})!</b>\n\n"
-        f"{customer_info}\n"
-        f"📦 <b>Items:</b>\n{items_text}\n\n"
-        f"💰 <b>Total:</b> ${float(order.get('total', 0)):.2f}\n"
-        f"⭐ <b>Points:</b> {order.get('points', 0)}\n"
-        f"🕐 <b>Time:</b> {order.get('timestamp', 'N/A')}\n"
-        f"💳 <b>Payment:</b> {order.get('paymentMethod', 'Unknown')}\n"
-        f"🆔 <b>Order ID:</b> <code>{order_id}</code>"
+    def delete(self, key: str):
+        with self._lock:
+            self._data.pop(key, None)
+            self._save()
+
+    def all(self) -> Dict[str, Any]:
+        with self._lock:
+            return dict(self._data)
+
+    def __len__(self):
+        with self._lock:
+            return len(self._data)
+
+
+order_store = JsonStore(ORDERS_FILE)
+
+# ==================== PAYMENT HELPERS ====================
+_KHQR_ALIASES = {"khqr", "kh qr", "khqr payment", "abakhqr", "acleda qr"}
+
+def is_khqr(payment_method: str) -> bool:
+    return payment_method.lower() in _KHQR_ALIASES
+
+def initial_order_status(payment_method: str) -> str:
+    if is_khqr(payment_method):
+        return "Pending (KHQR - Verify Payment)"
+    if payment_method.lower() in ("cash on delivery", "cod"):
+        return "Pending (COD)"
+    return "Paid"
+
+# ==================== QR CODE ====================
+def generate_khqr(order_id: str, amount: float, description: str = "") -> str:
+    filepath = os.path.join(QR_DIR, f"khqr_{order_id}.png")
+    khqr_data = (
+        f"khqr://{KHQR_MERCHANT_ID}"
+        f"?amount={amount:.2f}&currency=USD"
+        f"&description={description or f'Order {order_id}'}"
     )
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "💬 Reply to Customer", "callback_data": f"reply_{order_id}"}],
-            [{"text": "✅ Mark as Paid & Send Invoice", "callback_data": f"paid_{order_id}"}],
-            [{"text": "📄 Mark as Ready", "callback_data": f"ready_{order_id}"}]
-        ]
-    }
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = json.dumps({
-        'chat_id': SELLER_CHAT_ID,
-        'text': order_text,
-        'parse_mode': 'HTML',
-        'reply_markup': keyboard
-    }).encode('utf-8')
-    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(khqr_data)
+    qr.make(fit=True)
+    qr.make_image(fill_color="black", back_color="white").save(filepath)
+    return filepath
+
+def cleanup_old_qr_codes(days: int = 7) -> int:
+    deleted = 0
+    cutoff = time.time() - days * 86400
+    for fname in os.listdir(QR_DIR):
+        fpath = os.path.join(QR_DIR, fname)
+        if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff:
+            os.remove(fpath)
+            deleted += 1
+    logger.info("QR cleanup: deleted %d files", deleted)
+    return deleted
+
+# ==================== INVOICE ====================
+def generate_invoice(order_data: dict) -> str:
+    order_id = order_data.get("orderId", order_data.get("order_id", "unknown"))
+    filepath = os.path.join(INVOICE_DIR, f"invoice_{order_id}.pdf")
+    doc = SimpleDocTemplate(filepath, pagesize=letter,
+                            topMargin=0.5 * inch, bottomMargin=0.5 * inch)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "TitleStyle", parent=styles["Heading1"],
+        alignment=TA_CENTER, textColor=colors.HexColor("#ff6b00"),
+    )
+
+    story = [
+        Paragraph("Bird Nest House", title_style),
+        Paragraph("Official Invoice", styles["Heading2"]),
+        Spacer(1, 0.2 * inch),
+        Paragraph(f"Order ID: {order_id}", styles["Normal"]),
+        Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles["Normal"]),
+        Paragraph(f"Customer: {order_data.get('user_name', order_data.get('userName', 'N/A'))}", styles["Normal"]),
+        Paragraph(f"Payment: {order_data.get('paymentMethod', 'N/A')}", styles["Normal"]),
+    ]
+
+    delivery = order_data.get("delivery_location", {})
+    if delivery:
+        story.append(Paragraph(f"Delivery: {delivery.get('address', 'N/A')}", styles["Normal"]))
+
+    story.append(Spacer(1, 0.2 * inch))
+
+    rows = [["Item", "Qty", "Unit Price", "Total"]]
+    subtotal = 0.0
+    for item in order_data.get("items", []):
+        qty   = int(item.get("quantity", 1))
+        price = float(item.get("price", 0))
+        total = price * qty
+        subtotal += total
+        rows.append([item.get("name", "?"), str(qty), f"${price:.2f}", f"${total:.2f}"])
+
+    delivery_fee = float(order_data.get("deliveryFee", 0))
+    if delivery_fee:
+        rows.append(["Delivery Fee", "1", f"${delivery_fee:.2f}", f"${delivery_fee:.2f}"])
+        subtotal += delivery_fee
+
+    discount = float(order_data.get("discountApplied", 0))
+    if discount:
+        rows.append(["Discount", "", "", f"-${discount:.2f}"])
+
+    rows.append(["", "", "Total:", f"${order_data.get('total', subtotal - discount):.2f}"])
+
+    table = Table(rows, colWidths=[3 * inch, inch, 1.5 * inch, 1.5 * inch])
+    table.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  colors.grey),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.whitesmoke),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("BOTTOMPADDING", (0, 0), (-1, 0),  12),
+        ("BACKGROUND",    (0, 1), (-1, -1), colors.beige),
+        ("GRID",          (0, 0), (-1, -1), 1, colors.black),
+        ("ALIGN",         (2, 1), (-1, -1), "RIGHT"),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 0.3 * inch))
+
+    notes = order_data.get("orderNotes", "")
+    if notes:
+        story += [Paragraph("<b>Order Notes:</b>", styles["Normal"]),
+                  Paragraph(notes, styles["Normal"]),
+                  Spacer(1, 0.2 * inch)]
+
+    story += [
+        Paragraph("<b>Store Information:</b>", styles["Normal"]),
+        Paragraph(f"📍 {STORE_LOCATION['name']}", styles["Normal"]),
+        Paragraph(f"🏠 {STORE_LOCATION['address']}", styles["Normal"]),
+        Paragraph(f"📞 {STORE_LOCATION['phone']}", styles["Normal"]),
+        Spacer(1, 0.2 * inch),
+        Paragraph(f"Points Earned: ⭐ {order_data.get('points', 0)}", styles["Normal"]),
+        Spacer(1, 0.1 * inch),
+        Paragraph("Thank you for shopping at Bird Nest House!", styles["Normal"]),
+        Paragraph("For support, contact us on Telegram.", styles["Normal"]),
+    ]
+
+    doc.build(story)
+    return filepath
+
+# ==================== TELEGRAM HELPERS ====================
+def _tg_post(endpoint: str, payload: dict) -> bool:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{endpoint}"
     try:
-        with urllib.request.urlopen(req) as resp:
-            logging.info(f"✅ Seller notified for order {order_id} (source: {source})")
-            return True
-    except urllib.error.URLError as e:
-        logging.error(f"❌ Telegram notify failed for {order_id}: {e}")
+        resp = requests.post(url, json=payload, timeout=10)
+        return resp.ok
+    except Exception as e:
+        logger.error("Telegram %s failed: %s", endpoint, e)
         return False
 
-# ---------- Flask app ----------
-flask_app = Flask(__name__)
-flask_app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
-ADMIN_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'change_this_password')
-ADMIN_SECRET   = os.getenv('ADMIN_SECRET', 'my-secret-key')
+def send_telegram_message(chat_id: int, text: str,
+                          parse_mode: str = "HTML",
+                          reply_markup: dict = None) -> bool:
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    return _tg_post("sendMessage", payload)
 
-# ✅ CORS — allows the Mini App website to call /api/* from the browser
+def send_telegram_location(chat_id: int, lat: float, lon: float) -> bool:
+    return _tg_post("sendLocation", {"chat_id": chat_id, "latitude": lat, "longitude": lon})
+
+def send_telegram_document(chat_id: int, document_path: str, caption: str = "") -> bool:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+    try:
+        with open(document_path, "rb") as f:
+            resp = requests.post(
+                url,
+                data={"chat_id": chat_id, "caption": caption, "parse_mode": "Markdown"},
+                files={"document": (os.path.basename(document_path), f, "application/pdf")},
+                timeout=30,
+            )
+        return resp.ok
+    except Exception as e:
+        logger.error("Failed to send document to %s: %s", chat_id, e)
+        return False
+
+# ==================== AUTH HELPERS ====================
+def require_admin_secret(f):
+    """Decorator: reject requests that don't carry the correct X-App-Secret header."""
+    from functools import wraps
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if request.headers.get("X-App-Secret", "") != ADMIN_SECRET:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return wrapper
+
+def require_dashboard_auth(f):
+    """Decorator: redirect to /dashboard login if not authenticated."""
+    from functools import wraps
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("dashboard_auth"):
+            return redirect(url_for("dashboard"))
+        return f(*args, **kwargs)
+    return wrapper
+
+# ==================== FLASK APP ====================
+flask_app = Flask(__name__)
+flask_app.secret_key = FLASK_SECRET_KEY
+
 CORS(flask_app, resources={
     r"/api/*": {
-        "origins": [
-            "https://birdnesttgminiapp.web.app",
-            "https://birdnesttgminiapp.firebaseapp.com"
-        ],
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "X-App-Secret"]
+        "origins": os.getenv(
+            "CORS_ORIGINS",
+            "https://birdnesttgminiapp.web.app,https://birdnesttgminiapp.firebaseapp.com",
+        ).split(","),
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "X-App-Secret", "Authorization"],
     }
 })
 
-@flask_app.route('/')
-def health():
-    return "Bot is running", 200
+limiter = Limiter(
+    get_remote_address,
+    app=flask_app,
+    default_limits=["200 per hour"],
+    storage_uri="memory://",
+)
 
-@flask_app.route('/dashboard', methods=['GET', 'POST'])
-def dashboard():
-    if request.method == 'POST':
-        if request.form.get('password') == ADMIN_PASSWORD:
-            session['dashboard_auth'] = True
-            return redirect(url_for('dashboard'))
-        else:
-            return "<h2>Wrong password</h2><a href='/dashboard'>Try again</a>", 401
-    if not session.get('dashboard_auth'):
-        return '''
-            <!DOCTYPE html>
-            <html>
-            <head><title>Dashboard Login</title></head>
-            <body style="font-family: sans-serif; text-align: center; margin-top: 100px;">
-                <form method="post">
-                    <label>Password: <input type="password" name="password" required></label>
-                    <button type="submit">Login</button>
-                </form>
-            </body>
-            </html>
-        '''
-    return send_from_directory('.', 'dashboard.html')
+# ==================== ORDER ENDPOINTS ====================
+@flask_app.route("/api/new-order", methods=["POST", "OPTIONS"])
+@require_admin_secret
+def receive_order():
+    if request.method == "OPTIONS":
+        return "", 204
 
-@flask_app.route('/api/orders')
-def api_orders():
-    if not os.path.exists(ORDERS_FILE):
-        with open(ORDERS_FILE, 'w') as f:
-            json.dump({}, f)
-        return jsonify([])
-    try:
-        with open(ORDERS_FILE, 'r') as f:
-            orders = json.load(f)
-        orders_list = []
-        for order_id, order_data in orders.items():
-            order_data['orderId'] = order_id
-            orders_list.append(order_data)
-        return jsonify(orders_list)
-    except Exception as e:
-        logging.error(f"Error reading orders: {e}")
-        return jsonify([])
-
-@flask_app.route('/api/update-status', methods=['POST'])
-def update_status():
-    data = request.get_json()
-    order_id   = data.get('orderId')
-    new_status = data.get('status')
-    if not order_id or not new_status:
-        return jsonify({'success': False, 'error': 'Missing orderId or status'}), 400
-    if not os.path.exists(ORDERS_FILE):
-        return jsonify({'success': False, 'error': 'Orders file not found'}), 404
-    with open(ORDERS_FILE, 'r') as f:
-        orders = json.load(f)
-    if order_id not in orders:
-        return jsonify({'success': False, 'error': 'Order not found'}), 404
-    orders[order_id]['status'] = new_status
-    with open(ORDERS_FILE, 'w') as f:
-        json.dump(orders, f, indent=2)
-    return jsonify({'success': True})
-
-@flask_app.route('/api/send-message', methods=['POST'])
-def send_message():
-    data     = request.get_json()
-    chat_id  = data.get('chatId')
-    message  = data.get('message')
-    if not chat_id or not message:
-        return jsonify({'success': False, 'error': 'Missing chatId or message'}), 400
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = json.dumps({
-        'chat_id': chat_id,
-        'text': f"📢 *Seller Message:*\n{message}",
-        'parse_mode': 'Markdown'
-    }).encode('utf-8')
-    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(req) as response:
-            if response.status == 200:
-                return jsonify({'success': True})
-            else:
-                return jsonify({'success': False, 'error': 'Telegram API error'}), 500
-    except urllib.error.URLError as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@flask_app.route('/api/invoice/<order_id>')
-def get_invoice(order_id):
-    invoice_path = f"{INVOICE_DIR}/invoice_{order_id}.pdf"
-    if os.path.exists(invoice_path):
-        return send_file(invoice_path, as_attachment=True, download_name=f"invoice_{order_id}.pdf")
-    return jsonify({'error': 'Invoice not found'}), 404
-
-@flask_app.route('/api/send-invoice/<order_id>', methods=['POST'])
-def send_invoice_manual(order_id):
-    if order_id not in order_storage:
-        return jsonify({'error': 'Order not found'}), 404
-    if order_storage[order_id].get('invoiceSent'):
-        return jsonify({'error': 'Invoice already sent'}), 400
-    try:
-        invoice_path = generate_invoice(order_storage[order_id])
-        return jsonify({'success': True, 'invoiceUrl': f'/api/invoice/{order_id}'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@flask_app.route('/api/new-order', methods=['POST', 'OPTIONS'])
-def receive_order_from_webapp():
-    if request.method == 'OPTIONS':
-        return '', 204
-
-    secret = request.headers.get('X-App-Secret', '')
-    if secret != ADMIN_SECRET:
-        logging.warning(f"Unauthorized /api/new-order — got secret: '{secret}'")
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data:
-        return jsonify({'error': 'No JSON body'}), 400
+        return jsonify({"error": "No JSON body"}), 400
 
-    user_id       = str(data.get('userId', 'web_unknown'))
-    user_name     = data.get('userName', 'Guest')
-    username      = data.get('username', '')
-    first_name    = data.get('firstName', '')
-    last_name     = data.get('lastName', '')
-    items         = data.get('items', [])
-    total         = data.get('total', '0.00')
-    points        = data.get('points', 0)
-    payment       = data.get('paymentMethod', 'Unknown')
-    buyer_chat_id = data.get('chatId')
-    timestamp     = data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    user_id    = str(data.get("userId", "web_unknown"))
+    user_name  = data.get("userName", "Guest")
+    items      = data.get("items", [])
+    total      = float(data.get("total", 0))
+    payment    = data.get("paymentMethod", "Unknown")
+    chat_id    = data.get("chatId")
+    timestamp  = data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    delivery_fee = float(data.get("deliveryFee", 0))
+    notes      = data.get("orderNotes", "")
+    discount   = float(data.get("discountApplied", 0))
+    delivery_location = data.get("deliveryLocation")
+    points     = int(data.get("points", 0))
 
-    order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
+    order_id = f"ORD_{user_id}_{secrets.token_hex(4)}"
+    status   = initial_order_status(payment)
 
     order_record = {
-        'chat_id':       buyer_chat_id,
-        'user_id':       user_id,
-        'user_name':     user_name,
-        'username':      username,
-        'first_name':    first_name,
-        'last_name':     last_name,
-        'timestamp':     timestamp,
-        'total':         float(total),
-        'points':        points,
-        'items':         items,
-        'status':        'Pending (COD)' if payment == 'Cash on Delivery' else 'Paid',
-        'paymentMethod': payment,
-        'invoiceSent':   False,
-        'source':        'web'
+        "orderId":         order_id,
+        "chat_id":         chat_id,
+        "user_id":         user_id,
+        "user_name":       user_name,
+        "username":        data.get("username", ""),
+        "first_name":      data.get("firstName", ""),
+        "last_name":       data.get("lastName", ""),
+        "timestamp":       timestamp,
+        "created_at":      datetime.now().isoformat(),
+        "total":           total,
+        "points":          points,
+        "items":           items,
+        "status":          status,
+        "paymentMethod":   payment,
+        "deliveryFee":     delivery_fee,
+        "orderNotes":      notes,
+        "discountApplied": discount,
+        "delivery_location": delivery_location,
+        "invoiceSent":     False,
+        "source":          "web",
     }
-    order_storage[order_id] = order_record
-    save_orders(order_storage)
+    order_store.set(order_id, order_record)
 
-    notified = send_seller_notification_sync(order_id, order_record, source="Web")
-    logging.info(f"New web order {order_id} | customer: {user_name} | total: ${total} | notified: {notified}")
-
-    return jsonify({'success': True, 'orderId': order_id, 'notified': notified})
-
-def run_flask():
-    port = int(os.environ.get('PORT', 10000))
-    flask_app.run(host='0.0.0.0', port=port, use_reloader=False, threaded=True)
-
-# ---------- Bot Handlers ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    button = KeyboardButton("🍽️ Open Order menu", web_app=WebAppInfo(url=YOUR_WEB_APP_URL))
-    await update.message.reply_text(
-        "Welcome to Bird Nest House! 🥚\nClick the button below to place your order:",
-        reply_markup=ReplyKeyboardMarkup([[button]], resize_keyboard=True)
-    )
-
-async def reset_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.set_chat_menu_button(
-        chat_id=update.effective_chat.id,
-        menu_button=MenuButtonDefault()
-    )
-    await update.message.reply_text("✅ Persistent menu button removed. Use the keyboard button.")
-
-async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'reply_to_order' in context.user_data:
-        order_id = context.user_data['reply_to_order']
-        del context.user_data['reply_to_order']
-        await update.message.reply_text(f"✅ Chat for order {order_id} closed.")
-    else:
-        await update.message.reply_text("No active chat to close.")
-
-async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id == SELLER_CHAT_ID:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Open Dashboard", web_app=WebAppInfo(url="https://birdbot-5sgv.onrender.com/dashboard"))]
-        ])
-        await update.message.reply_text(
-            "📊 *Seller Dashboard*\n\nClick the button below to manage orders.",
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-    else:
-        await update.message.reply_text("Unauthorized.")
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id != SELLER_CHAT_ID:
-        await update.message.reply_text("Unauthorized.")
-        return
-    message = ' '.join(context.args)
-    if not message:
-        await update.message.reply_text("Usage: /broadcast <message>")
-        return
-    if not os.path.exists(ORDERS_FILE):
-        await update.message.reply_text("No orders found.")
-        return
-    with open(ORDERS_FILE, 'r') as f:
-        orders = json.load(f)
-    chat_ids = set()
-    for order in orders.values():
-        if 'chat_id' in order:
-            chat_ids.add(order['chat_id'])
-    if not chat_ids:
-        await update.message.reply_text("No customers found.")
-        return
-    sent = failed = 0
-    for chat_id in chat_ids:
+    if is_khqr(payment):
         try:
-            await context.bot.send_message(chat_id=chat_id, text=f"📢 *Announcement:*\n{message}", parse_mode="Markdown")
-            sent += 1
+            generate_khqr(order_id, total, f"Order {order_id}")
         except Exception as e:
-            logging.error(f"Failed to send to {chat_id}: {e}")
-            failed += 1
-    await update.message.reply_text(f"Broadcast complete. Sent: {sent}, Failed: {failed}")
+            logger.error("KHQR generation failed for %s: %s", order_id, e)
 
-async def test_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"🧪 Test message command received from {update.effective_chat.id}")
+    # Notify seller
+    items_text = "\n".join(
+        f"  • {i.get('name','?')} x{i.get('quantity',1)} — ${float(i.get('price',0)):.2f}"
+        for i in items
+    )
+    delivery_info = ""
+    if delivery_location:
+        delivery_info = f"\n📍 <b>Delivery:</b> {delivery_location.get('address', 'Provided')}"
+
+    seller_text = (
+        f"🆕 <b>NEW ORDER #{order_id}</b>\n\n"
+        f"👤 <b>Customer:</b> {user_name}\n"
+        f"🆔 <b>User ID:</b> <code>{user_id}</code>\n\n"
+        f"📦 <b>Items:</b>\n{items_text}\n\n"
+        f"💰 <b>Total:</b> ${total:.2f}\n"
+        f"⭐ <b>Points Earned:</b> {points}\n"
+        f"💳 <b>Payment:</b> {payment}"
+        + ("\n⚠️ <b>KHQR — verify payment in banking app!</b>" if is_khqr(payment) else "")
+        + delivery_info
+        + f"\n📝 <b>Notes:</b> {notes or 'None'}"
+    )
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "✅ Mark as Paid",     "callback_data": f"paid_{order_id}"}],
+            [{"text": "📄 Mark as Ready",    "callback_data": f"ready_{order_id}"}],
+            [{"text": "📍 Send Store Location", "callback_data": f"send_location_{order_id}"}],
+            [{"text": "📋 View Order",       "callback_data": f"view_order_{order_id}"}],
+        ]
+    }
+    send_telegram_message(SELLER_CHAT_ID, seller_text, "HTML", keyboard)
+
+    # Confirm to buyer
+    if chat_id:
+        buyer_text = (
+            f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
+            f"📦 <b>Order ID:</b> <code>{order_id}</code>\n"
+            f"💰 <b>Total:</b> ${total:.2f}\n"
+            f"⭐ <b>Points Earned:</b> {points}\n\n"
+            + (
+                "⏳ Verifying your KHQR payment. Invoice will follow once confirmed."
+                if is_khqr(payment)
+                else "We will notify you when your order is ready."
+            )
+        )
+        send_telegram_message(int(chat_id), buyer_text, "HTML")
+
+    logger.info("New order %s | customer: %s | total: $%.2f | payment: %s",
+                order_id, user_name, total, payment)
+    return jsonify({"success": True, "orderId": order_id, "storeLocation": STORE_LOCATION})
+
+
+@flask_app.route("/api/orders", methods=["GET"])
+@require_admin_secret
+def api_orders():
+    return jsonify(list(order_store.all().values()))
+
+
+@flask_app.route("/api/update-status", methods=["POST"])
+@require_admin_secret
+def update_status():
+    data = request.get_json(silent=True) or {}
+    order_id   = data.get("orderId")
+    new_status = data.get("status")
+    if not order_id or not new_status:
+        return jsonify({"success": False, "error": "Missing orderId or status"}), 400
+
+    order = order_store.get(order_id)
+    if not order:
+        return jsonify({"success": False, "error": "Order not found"}), 404
+
+    order["status"] = new_status
+    order_store.set(order_id, order)
+
+    buyer_chat_id = order.get("chat_id")
+    status_msgs = {
+        "Paid":       "✅ Your payment has been confirmed! We are processing your order.",
+        "Ready":      "📦 Your order is ready for pickup/delivery!",
+        "Completed":  "🎉 Your order has been completed! Thank you for shopping with us!",
+        "Processing": "🔄 Your order is being prepared.",
+    }
+    if buyer_chat_id and new_status in status_msgs:
+        send_telegram_message(int(buyer_chat_id),
+                              f"📦 Order #{order_id}\n\n{status_msgs[new_status]}")
+
+    return jsonify({"success": True})
+
+
+# ==================== INVOICE & QR ENDPOINTS ====================
+@flask_app.route("/api/invoice/<order_id>", methods=["GET"])
+def get_invoice(order_id):
+    """
+    Public — anyone with the order ID can download the invoice.
+    The order ID now includes a random token, so guessing is not practical.
+    """
+    path = os.path.join(INVOICE_DIR, f"invoice_{order_id}.pdf")
+    if os.path.exists(path):
+        return send_file(path, as_attachment=True, download_name=f"invoice_{order_id}.pdf")
+    return jsonify({"error": "Invoice not found"}), 404
+
+
+@flask_app.route("/api/khqr", methods=["POST"])
+@require_admin_secret
+def generate_khqr_endpoint():
+    data = request.get_json(silent=True) or {}
+    order_id = data.get("orderId")
+    amount   = float(data.get("amount", 0))
+    desc     = data.get("description", "")
+    if not order_id:
+        return jsonify({"success": False, "error": "Missing orderId"}), 400
     try:
-        await context.bot.send_message(chat_id=SELLER_CHAT_ID, text="🧪 Test message from bot to seller")
-        await update.message.reply_text("✅ Test message sent to seller!")
+        generate_khqr(order_id, amount, desc)
+        return jsonify({"success": True, "qrUrl": f"/api/khqr-image/{order_id}"})
     except Exception as e:
-        await update.message.reply_text(f"❌ Failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
-async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🔔 handle_order triggered")
+
+@flask_app.route("/api/khqr-image/<order_id>", methods=["GET"])
+def get_khqr_image(order_id):
+    path = os.path.join(QR_DIR, f"khqr_{order_id}.png")
+    if os.path.exists(path):
+        return send_file(path, mimetype="image/png")
+    return jsonify({"error": "QR code not found"}), 404
+
+
+@flask_app.route("/api/khqr-instructions/<order_id>", methods=["GET"])
+def get_khqr_instructions(order_id):
+    order = order_store.get(order_id, {})
+    html = (
+        f"<div style='text-align:center;padding:20px;'>"
+        f"<h3>🇰🇭 KHQR Payment</h3>"
+        f"<table style='margin:0 auto;text-align:left;'>"
+        f"<tr><td><b>Bank:</b></td><td>{KHQR_ACQUIRER}</td></tr>"
+        f"<tr><td><b>Account Name:</b></td><td>{KHQR_MERCHANT_NAME}</td></tr>"
+        f"<tr><td><b>Account No.:</b></td><td>{KHQR_MERCHANT_ID}</td></tr>"
+        f"<tr><td><b>Amount:</b></td><td>${order.get('total', 0):.2f}</td></tr>"
+        f"<tr><td><b>Reference:</b></td><td>{order_id}</td></tr>"
+        f"</table>"
+        f"<p style='margin-top:20px;'>After payment, the seller will confirm and send your invoice.</p>"
+        f"</div>"
+    )
+    return jsonify({"success": True, "instructions": html})
+
+
+# ==================== STORE ENDPOINT ====================
+@flask_app.route("/api/store/location", methods=["GET"])
+def get_store_location():
+    return jsonify({"success": True, "store": STORE_LOCATION})
+
+
+# ==================== MESSAGING ENDPOINT ====================
+@flask_app.route("/api/send-message", methods=["POST"])
+@require_admin_secret
+def send_message():
+    data    = request.get_json(silent=True) or {}
+    chat_id = data.get("chatId")
+    message = data.get("message")
+    if not chat_id or not message:
+        return jsonify({"success": False, "error": "Missing chatId or message"}), 400
+    ok = send_telegram_message(int(chat_id), f"📢 *Message from Bird Nest House:*\n\n{message}", "Markdown")
+    return jsonify({"success": ok})
+
+
+# ==================== ADMIN: CLEANUP & BACKUP ====================
+@flask_app.route("/api/admin/cleanup", methods=["POST"])
+@require_admin_secret
+def admin_cleanup():
+    data    = request.get_json(silent=True) or {}
+    qr_del  = cleanup_old_qr_codes(days=data.get("qrDays", QR_RETENTION_DAYS))
+    return jsonify({
+        "success":         True,
+        "qr_codes_deleted": qr_del,
+        "timestamp":       datetime.now().isoformat(),
+    })
+
+
+@flask_app.route("/api/admin/backup", methods=["POST"])
+@require_admin_secret
+def admin_backup():
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    orders_backup = os.path.join(BACKUP_DIR, f"orders_backup_{ts}.json")
+    with open(orders_backup, "w") as f:
+        json.dump(order_store.all(), f, indent=2)
+    return jsonify({"success": True, "backup_file": orders_backup, "timestamp": ts})
+
+
+# ==================== DASHBOARD ====================
+@flask_app.route("/dashboard", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+def dashboard():
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        # Constant-time comparison to prevent timing attacks
+        if secrets.compare_digest(password, ADMIN_PASSWORD):
+            session["dashboard_auth"] = True
+            return redirect(url_for("dashboard_home"))
+        return "<h2>Wrong password</h2><a href='/dashboard'>Try again</a>", 401
+
+    return """<!DOCTYPE html>
+<html><head><title>Dashboard Login</title></head>
+<body style="font-family:sans-serif;text-align:center;margin-top:100px;">
+  <form method="post">
+    <label>Password: <input type="password" name="password" required></label>
+    <button type="submit">Login</button>
+  </form>
+</body></html>"""
+
+
+@flask_app.route("/dashboard/home")
+@require_dashboard_auth
+def dashboard_home():
+    return send_from_directory(".", "dashboard.html")
+
+
+# ==================== HEALTH CHECK ====================
+@flask_app.route("/")
+def health():
+    return jsonify({
+        "status":        "running",
+        "timestamp":     datetime.now().isoformat(),
+        "orders_count":  len(order_store),
+        "store":         STORE_LOCATION["name"],
+        "cleanup": {
+            "chat_retention_days": CHAT_RETENTION_DAYS,
+            "qr_retention_days":   QR_RETENTION_DAYS,
+            "auto_cleanup_enabled": AUTO_CLEANUP_ENABLED,
+        },
+    })
+
+
+# ==================== AUTO CLEANUP ====================
+def _run_scheduled_cleanup():
+    while True:
+        time.sleep(CLEANUP_INTERVAL_HOURS * 3600)
+        try:
+            deleted = cleanup_old_qr_codes(days=QR_RETENTION_DAYS)
+            logger.info("Auto-cleanup: %d QR codes deleted", deleted)
+        except Exception as e:
+            logger.error("Auto-cleanup error: %s", e)
+
+
+# ==================== TELEGRAM BOT HANDLERS ====================
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    order_btn    = KeyboardButton("🍽️ Open Order Menu", web_app=WebAppInfo(url=WEB_APP_URL))
+    location_btn = KeyboardButton("📍 Share My Location", request_location=True)
+    await update.message.reply_text(
+        "Welcome to Bird Nest House! 🥚\n\n"
+        "🇰🇭 Premium bird nest products\n"
+        "✅ Halal Certified | 🏆 5S & Kaizen\n\n"
+        "<b>Features:</b>\n"
+        "• Place orders easily\n"
+        "• Share your location for delivery\n"
+        "• Get store location instantly\n\n"
+        "Tap below to start:",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup(
+            [[order_btn], [location_btn]], resize_keyboard=True
+        ),
+    )
+
+
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.location:
+        return
+    loc  = update.message.location
+    user = update.effective_user
+
+    # Find the most recent active order for this chat
+    active_order_id = None
+    for oid, order in order_store.all().items():
+        if (str(order.get("chat_id")) == str(update.effective_chat.id)
+                and order.get("status") not in ("Completed", "Cancelled")):
+            active_order_id = oid
+            break
+
+    maps_url = f"https://maps.google.com/?q={loc.latitude},{loc.longitude}"
+    seller_text = (
+        f"📍 <b>Customer Location Shared!</b>\n\n"
+        f"👤 <b>Customer:</b> {user.first_name}\n"
+        f"🆔 <b>Chat ID:</b> <code>{update.effective_chat.id}</code>\n"
+        f"📦 <b>Active Order:</b> {active_order_id or 'None'}\n\n"
+        f"Lat: {loc.latitude} | Lon: {loc.longitude}\n"
+        f"<a href='{maps_url}'>View on Map</a>"
+    )
+    send_telegram_message(SELLER_CHAT_ID, seller_text, "HTML")
+
+    await update.message.reply_text(
+        "✅ Location shared with the seller!\nThey can now plan your delivery."
+    )
+
+
+async def handle_webapp_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.web_app_data:
-        await update.message.reply_text("No order data received. Please use the 'Open Order menu' button.")
+        await update.message.reply_text("No order data received. Please use the Order Menu button.")
         return
-    raw_data = update.message.web_app_data.data
-    print(f"📦 Raw order data: {raw_data}")
+
+    raw = update.message.web_app_data.data
     try:
-        data = json.loads(raw_data)
-    except json.JSONDecodeError as e:
-        logging.error(f"Invalid JSON: {e}")
-        await update.message.reply_text("Error processing order.")
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        await update.message.reply_text("Error processing order data. Please try again.")
         return
 
-    user_id          = str(data.get('userId', 'Unknown'))
-    user_name        = data.get('userName', 'Guest')
-    username         = data.get('username', '')
-    first_name       = data.get('firstName', '')
-    last_name        = data.get('lastName', '')
-    items            = data.get('items', [])
-    total            = data.get('total', '0.00')
-    points           = data.get('points', 0)
-    timestamp        = data.get('timestamp', 'N/A')
-    payment_method   = data.get('paymentMethod', 'Unknown')
-    send_invoice_now = data.get('sendInvoiceImmediately', False)
-
-    order_id      = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
+    user_id   = str(data.get("userId", update.effective_chat.id))
+    user_name = data.get("userName", update.effective_user.first_name or "Guest")
+    items     = data.get("items", [])
+    total     = float(data.get("total", 0))
+    payment   = data.get("paymentMethod", "Unknown")
+    points    = int(data.get("points", 0))
+    delivery_fee = float(data.get("deliveryFee", 0))
+    notes     = data.get("orderNotes", "")
     buyer_chat_id = update.effective_chat.id
 
+    order_id = f"ORD_{user_id}_{secrets.token_hex(4)}"
+    status   = initial_order_status(payment)
+
     order_record = {
-        'chat_id':       buyer_chat_id,
-        'user_id':       user_id,
-        'user_name':     user_name,
-        'username':      username,
-        'first_name':    first_name,
-        'last_name':     last_name,
-        'timestamp':     timestamp,
-        'total':         float(total),
-        'points':        points,
-        'items':         items,
-        'status':        'Paid' if send_invoice_now else 'Pending (COD)',
-        'paymentMethod': payment_method,
-        'invoiceSent':   send_invoice_now,
-        'source':        'bot'
+        "orderId":         order_id,
+        "chat_id":         buyer_chat_id,
+        "user_id":         user_id,
+        "user_name":       user_name,
+        "username":        data.get("username", update.effective_chat.username or ""),
+        "first_name":      data.get("firstName", update.effective_user.first_name or ""),
+        "last_name":       data.get("lastName", update.effective_user.last_name or ""),
+        "timestamp":       data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        "created_at":      datetime.now().isoformat(),
+        "total":           total,
+        "points":          points,
+        "items":           items,
+        "status":          status,
+        "paymentMethod":   payment,
+        "deliveryFee":     delivery_fee,
+        "orderNotes":      notes,
+        "discountApplied": float(data.get("discountApplied", 0)),
+        "delivery_location": None,
+        "invoiceSent":     False,
+        "source":          "bot",
     }
-    order_storage[order_id] = order_record
-    save_orders(order_storage)
+    order_store.set(order_id, order_record)
 
-    customer_info = f"👤 <b>Customer:</b> {user_name}\n"
-    if username:
-        customer_info += f"🆔 <b>Username:</b> @{username}\n"
-    customer_info += f"🔢 <b>User ID:</b> <code>{user_id}</code>\n"
-    if first_name:
-        customer_info += f"📛 <b>First Name:</b> {first_name}\n"
-    if last_name:
-        customer_info += f"📛 <b>Last Name:</b> {last_name}\n"
+    if is_khqr(payment):
+        try:
+            generate_khqr(order_id, total, f"Order {order_id}")
+        except Exception as e:
+            logger.error("KHQR gen failed %s: %s", order_id, e)
 
-    items_text = "\n".join([
-        f"  • {item.get('name', '?')} x{item.get('quantity', 1)} — ${float(item.get('price', 0)):.2f}"
-        for item in items
-    ])
-
-    order_text = (
-        f"🆕 <b>NEW ORDER (via Bot)!</b>\n\n{customer_info}\n"
-        f"📦 <b>Items:</b>\n{items_text}\n\n"
-        f"💰 <b>Total:</b> ${total}\n"
-        f"⭐ <b>Points Earned:</b> {points}\n"
-        f"🕐 <b>Time:</b> {timestamp}\n"
-        f"💳 <b>Payment:</b> {payment_method}\n"
-        f"🆔 <b>Order ID:</b> <code>{order_id}</code>"
+    items_text = "\n".join(
+        f"  • {i.get('name','?')} x{i.get('quantity',1)} — ${float(i.get('price',0)):.2f}"
+        for i in items
     )
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💬 Reply to Customer",          callback_data=f"reply_{order_id}")],
-        [InlineKeyboardButton("✅ Mark as Paid & Send Invoice", callback_data=f"paid_{order_id}")],
-        [InlineKeyboardButton("📄 Mark as Ready",              callback_data=f"ready_{order_id}")]
-    ])
+    seller_text = (
+        f"🆕 <b>NEW ORDER #{order_id}</b>\n\n"
+        f"👤 <b>Customer:</b> {user_name}\n"
+        f"🆔 <b>User ID:</b> <code>{user_id}</code>\n\n"
+        f"📦 <b>Items:</b>\n{items_text}\n\n"
+        f"💰 <b>Total:</b> ${total:.2f}\n"
+        f"⭐ <b>Points:</b> {points}\n"
+        f"💳 <b>Payment:</b> {payment}"
+        + ("\n⚠️ <b>KHQR — verify in banking app!</b>" if is_khqr(payment) else "")
+        + f"\n📝 <b>Notes:</b> {notes or 'None'}"
+    )
 
     try:
-        await context.bot.send_message(chat_id=SELLER_CHAT_ID, text=order_text, parse_mode="HTML", reply_markup=keyboard)
-        print("✅ Seller notification sent successfully!")
+        await context.bot.send_message(
+            chat_id=SELLER_CHAT_ID,
+            text=seller_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Mark as Paid",        callback_data=f"paid_{order_id}")],
+                [InlineKeyboardButton("📄 Mark as Ready",       callback_data=f"ready_{order_id}")],
+                [InlineKeyboardButton("📍 Send Store Location", callback_data=f"send_location_{order_id}")],
+                [InlineKeyboardButton("📋 View Order",          callback_data=f"view_order_{order_id}")],
+            ]),
+        )
     except Exception as e:
-        print(f"❌ Failed to send seller notification: {e}")
-        await update.message.reply_text("⚠️ Order received but seller notification failed.")
+        logger.error("Seller notification failed: %s", e)
 
-    await update.message.reply_text(
+    confirm_text = (
         f"✅ <b>Order Confirmed, {user_name}!</b>\n\n"
-        f"Total: ${total}\nYou earned {points} loyalty points 🎉\n\n"
-        f"We'll notify you when your order is ready.",
-        parse_mode="HTML"
+        f"📦 <b>Order ID:</b> <code>{order_id}</code>\n"
+        f"💰 <b>Total:</b> ${total:.2f}\n"
+        f"⭐ <b>Points Earned:</b> {points}\n\n"
+        + (
+            "⏳ Verifying KHQR payment. Invoice will be sent once confirmed."
+            if is_khqr(payment)
+            else "We will notify you when your order is ready."
+        )
     )
+    await update.message.reply_text(confirm_text, parse_mode="HTML")
+    logger.info("Bot order %s processed — %s $%.2f", order_id, payment, total)
 
-    if send_invoice_now:
-        try:
-            invoice_path = generate_invoice(order_storage[order_id])
-            with open(invoice_path, 'rb') as f:
-                await context.bot.send_document(
-                    chat_id=buyer_chat_id,
-                    document=f,
-                    filename=f"invoice_{order_id}.pdf",
-                    caption=f"🧾 *Invoice for Order {order_id}*\nThank you for your payment!",
-                    parse_mode="Markdown"
-                )
-        except Exception as e:
-            logging.error(f"Failed to generate/send invoice: {e}")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    cb_data = query.data
 
-    if data.startswith("reply_"):
-        order_id = data.split("_", 1)[1]
-        if order_id in order_storage:
-            context.user_data['reply_to_order'] = order_id
+    # ── paid ──────────────────────────────────────────────────────────────────
+    if cb_data.startswith("paid_"):
+        order_id = cb_data[5:]
+        order = order_store.get(order_id)
+        if not order:
+            await query.message.reply_text("⚠️ Order not found.")
+            return
+        buyer_chat_id = order.get("chat_id")
+        if not buyer_chat_id:
+            await query.message.reply_text("⚠️ No buyer chat ID.")
+            return
+        try:
+            invoice_path = generate_invoice(order)
+            sent = send_telegram_document(
+                int(buyer_chat_id), invoice_path,
+                f"🧾 *Invoice for Order {order_id}*\nPayment received. Thank you!"
+            )
+            if sent:
+                order["status"]      = "Paid"
+                order["invoiceSent"] = True
+                order_store.set(order_id, order)
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.message.reply_text(f"✅ Invoice sent to {order['user_name']} and order marked Paid.")
+            else:
+                await query.message.reply_text("⚠️ Failed to send invoice.")
+        except Exception as e:
+            logger.error("Invoice send error: %s", e)
+            await query.message.reply_text(f"⚠️ Invoice error: {e}")
+
+    # ── ready ─────────────────────────────────────────────────────────────────
+    elif cb_data.startswith("ready_"):
+        order_id = cb_data[6:]
+        order = order_store.get(order_id)
+        if not order:
+            await query.message.reply_text("⚠️ Order not found.")
+            return
+        buyer_chat_id = order.get("chat_id")
+        if not buyer_chat_id:
+            await query.message.reply_text("⚠️ No buyer chat ID.")
+            return
+        ready_msg = (
+            f"🍽️ <b>Your order is ready for pickup!</b>\n\n"
+            f"Thank you, {order['user_name']}!\n\n"
+            f"📍 <b>Pickup Location:</b>\n"
+            f"{STORE_LOCATION['name']}\n"
+            f"{STORE_LOCATION['address']}\n"
+            f"📞 {STORE_LOCATION['phone']}\n\n"
+            f"<a href='{STORE_LOCATION['map_url']}'>Open in Maps</a>\n\n"
+            f"Please bring your order ID: <code>{order_id}</code>"
+        )
+        if send_telegram_message(int(buyer_chat_id), ready_msg, "HTML"):
+            order["status"] = "Ready"
+            order_store.set(order_id, order)
             await query.edit_message_reply_markup(reply_markup=None)
-            await query.message.reply_text(f"✏️ Chat with customer (Order {order_id}). Send any message.\nTo close chat, use /closechat")
+            await query.message.reply_text(f"✅ Ready notification sent to {order['user_name']}.")
         else:
-            await query.message.reply_text("⚠️ Order not found.")
+            await query.message.reply_text("⚠️ Failed to send notification.")
 
-    elif data.startswith("paid_"):
-        order_id = data.split("_", 1)[1]
-        if order_id in order_storage:
-            buyer_chat_id = order_storage[order_id]['chat_id']
-            user_name     = order_storage[order_id]['user_name']
-            try:
-                invoice_path = generate_invoice(order_storage[order_id])
-                with open(invoice_path, 'rb') as f:
-                    await context.bot.send_document(
-                        chat_id=buyer_chat_id,
-                        document=f,
-                        filename=f"invoice_{order_id}.pdf",
-                        caption=f"🧾 *Invoice for Order {order_id}*\nPayment received. Thank you!",
-                        parse_mode="Markdown"
-                    )
-                order_storage[order_id]['status']      = 'Paid'
-                order_storage[order_id]['invoiceSent'] = True
-                save_orders(order_storage)
-                await query.edit_message_reply_markup(reply_markup=None)
-                await query.message.reply_text(f"✅ Invoice sent to {user_name} and order marked as Paid.")
-            except Exception as e:
-                logging.error(f"Failed to send manual invoice: {e}")
-                await query.message.reply_text("⚠️ Failed to generate invoice.")
-        else:
+    # ── send_location ─────────────────────────────────────────────────────────
+    elif cb_data.startswith("send_location_"):
+        order_id = cb_data[14:]
+        order = order_store.get(order_id)
+        if not order:
             await query.message.reply_text("⚠️ Order not found.")
+            return
+        buyer_chat_id = order.get("chat_id")
+        if not buyer_chat_id:
+            await query.message.reply_text("⚠️ No buyer chat ID.")
+            return
+        await context.bot.send_location(
+            chat_id=int(buyer_chat_id),
+            latitude=STORE_LOCATION["latitude"],
+            longitude=STORE_LOCATION["longitude"],
+        )
+        loc_msg = (
+            f"📍 <b>Our Store Location</b>\n\n"
+            f"🏠 <b>{STORE_LOCATION['name']}</b>\n"
+            f"📌 {STORE_LOCATION['address']}\n"
+            f"📞 {STORE_LOCATION['phone']}\n\n"
+            f"<a href='{STORE_LOCATION['map_url']}'>Open in Google Maps</a>"
+        )
+        send_telegram_message(int(buyer_chat_id), loc_msg, "HTML")
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text(f"✅ Store location sent to {order['user_name']}.")
 
-    elif data.startswith("ready_"):
-        order_id = data.split("_", 1)[1]
-        if order_id in order_storage:
-            buyer_chat_id = order_storage[order_id]['chat_id']
-            user_name     = order_storage[order_id]['user_name']
-            try:
-                await context.bot.send_message(
-                    chat_id=buyer_chat_id,
-                    text=f"🍽️ <b>Your order is ready for pickup!</b>\n\nThank you {user_name}!",
-                    parse_mode="HTML"
-                )
-                await query.edit_message_reply_markup(reply_markup=None)
-                await query.message.reply_text(f"✅ Ready notification sent to {user_name}.")
-                order_storage[order_id]['status'] = 'Ready'
-                save_orders(order_storage)
-            except Exception as e:
-                await query.message.reply_text("⚠️ Failed to send notification.")
-        else:
+    # ── view_order ────────────────────────────────────────────────────────────
+    elif cb_data.startswith("view_order_"):
+        order_id = cb_data[11:]
+        order = order_store.get(order_id)
+        if not order:
             await query.message.reply_text("⚠️ Order not found.")
+            return
+        items_text = "\n".join(
+            f"  • {i.get('name','?')} x{i.get('quantity',1)} — ${float(i.get('price',0)):.2f}"
+            for i in order.get("items", [])
+        )
+        details = (
+            f"📋 <b>Order #{order_id}</b>\n\n"
+            f"👤 {order.get('user_name','N/A')}\n"
+            f"📅 {order.get('timestamp','N/A')}\n"
+            f"💰 ${order.get('total',0):.2f}\n"
+            f"💳 {order.get('paymentMethod','N/A')}\n"
+            f"📊 {order.get('status','N/A')}\n\n"
+            f"📦 Items:\n{items_text}\n\n"
+            f"📝 Notes: {order.get('orderNotes','None')}"
+        )
+        await query.message.reply_text(details, parse_mode="HTML")
+
 
 async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'reply_to_order' not in context.user_data:
+    """Forward seller's typed reply to the relevant customer."""
+    if "reply_to_order" not in context.user_data:
         return
-    order_id = context.user_data['reply_to_order']
-    if order_id not in order_storage:
-        await update.message.reply_text("⚠️ Order session expired.")
-        del context.user_data['reply_to_order']
-        return
-    buyer_chat_id = order_storage[order_id]['chat_id']
-    user_name     = order_storage[order_id]['user_name']
-    try:
-        if update.message.text:
-            await context.bot.send_message(chat_id=buyer_chat_id, text=f"📨 <b>Message from Bird Nest House:</b>\n\n{update.message.text}", parse_mode="HTML")
-        elif update.message.photo:
-            caption = update.message.caption or ""
-            await context.bot.send_photo(chat_id=buyer_chat_id, photo=update.message.photo[-1].file_id, caption=f"📨 <b>Message from Bird Nest House:</b>\n\n{caption}", parse_mode="HTML")
-        elif update.message.sticker:
-            await context.bot.send_sticker(chat_id=buyer_chat_id, sticker=update.message.sticker.file_id)
-        else:
-            await update.message.reply_text("Unsupported media.")
-            return
-        await update.message.reply_text(f"✅ Message sent to {user_name}!")
-    except Exception as e:
-        await update.message.reply_text("⚠️ Failed to send message.")
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    order_id = context.user_data["reply_to_order"]
+    order    = order_store.get(order_id)
+    if not order:
+        await update.message.reply_text("⚠️ Order not found. Use /closechat to reset.")
+        del context.user_data["reply_to_order"]
+        return
+
+    buyer_chat_id = order.get("chat_id")
+    user_name     = order.get("user_name", "Customer")
+
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        caption = update.message.caption or ""
+        try:
+            await context.bot.send_photo(
+                chat_id=int(buyer_chat_id),
+                photo=file_id,
+                caption=f"📨 Message from Bird Nest House\n\n{caption}",
+                parse_mode="HTML",
+            )
+            await update.message.reply_text(f"✅ Photo sent to {user_name}!")
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Failed: {e}")
+    elif update.message.text:
+        msg_text    = update.message.text
+        customer_msg = (
+            f"📨 <b>Message from Bird Nest House</b>\n\n"
+            f"<b>Order:</b> <code>{order_id}</code>\n\n"
+            f"{msg_text}"
+        )
+        if send_telegram_message(int(buyer_chat_id), customer_msg, "HTML"):
+            await update.message.reply_text(f"✅ Message sent to {user_name}!")
+        else:
+            await update.message.reply_text("⚠️ Failed to send message.")
+    else:
+        await update.message.reply_text("Unsupported message type. Send text or photo.")
+
+
+# ── Seller commands ────────────────────────────────────────────────────────────
+def _seller_only(func):
+    from functools import wraps
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_chat.id != SELLER_CHAT_ID:
+            await update.message.reply_text("Unauthorized.")
+            return
+        return await func(update, context)
+    return wrapper
+
+
+@_seller_only
+async def cmd_sendlocation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /sendlocation <order_id>")
+        return
+    order_id = context.args[0]
+    order    = order_store.get(order_id)
+    if not order:
+        await update.message.reply_text("⚠️ Order not found.")
+        return
+    buyer_chat_id = order.get("chat_id")
+    if not buyer_chat_id:
+        await update.message.reply_text("⚠️ No chat ID for this customer.")
+        return
+    await context.bot.send_location(
+        chat_id=int(buyer_chat_id),
+        latitude=STORE_LOCATION["latitude"],
+        longitude=STORE_LOCATION["longitude"],
+    )
+    loc_msg = (
+        f"📍 <b>{STORE_LOCATION['name']}</b>\n"
+        f"{STORE_LOCATION['address']}\n"
+        f"📞 {STORE_LOCATION['phone']}\n\n"
+        f"<a href='{STORE_LOCATION['map_url']}'>Open in Google Maps</a>"
+    )
+    send_telegram_message(int(buyer_chat_id), loc_msg, "HTML")
+    await update.message.reply_text(f"✅ Store location sent to {order['user_name']}.")
+
+
+@_seller_only
+async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /chat <order_id>")
+        return
+    order_id = context.args[0]
+    order    = order_store.get(order_id)
+    if not order:
+        await update.message.reply_text("⚠️ Order not found.")
+        return
+    context.user_data["reply_to_order"] = order_id
     await update.message.reply_text(
-        "🤖 **Bot Status**\n\n"
-        "✅ Bot is running normally!\n"
-        f"🕐 Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        "🔄 Auto-restart enabled",
-        parse_mode="Markdown"
+        f"💬 <b>Chat with {order['user_name']}</b>\n"
+        f"📦 Order: <code>{order_id}</code>\n\n"
+        "✏️ Send any text or photo to reply.\n"
+        f"📍 Use /sendlocation {order_id} to share store location.\n\n"
+        "Use /closechat when done.",
+        parse_mode="HTML",
     )
 
-def run_bot():
-    application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start",      start))
-    application.add_handler(CommandHandler("resetmenu",  reset_menu))
-    application.add_handler(CommandHandler("closechat",  close_chat))
-    application.add_handler(CommandHandler("dashboard",  dashboard_command))
-    application.add_handler(CommandHandler("broadcast",  broadcast))
-    application.add_handler(CommandHandler("status",     status))
-    application.add_handler(CommandHandler("testmsg",    test_message))
-    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_order))
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
-    application.add_handler(MessageHandler(filters.PHOTO,       forward_reply))
-    application.add_handler(MessageHandler(filters.Sticker.ALL, forward_reply))
-    print("🤖 Bot started polling...")
-    application.run_polling(allowed_updates=["message", "callback_query"])
 
+@_seller_only
+async def cmd_closechat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    order_id = context.user_data.pop("reply_to_order", None)
+    if order_id:
+        await update.message.reply_text(f"✅ Chat for order {order_id} closed.")
+    else:
+        await update.message.reply_text("No active chat to close.")
+
+
+@_seller_only
+async def cmd_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = order_store.all()
+    if not orders:
+        await update.message.reply_text("No orders yet.")
+        return
+    lines = []
+    for oid, o in list(orders.items())[-20:]:
+        lines.append(f"• <code>{oid}</code> — {o.get('user_name','?')} — ${o.get('total',0):.2f} — {o.get('status','?')}")
+    await update.message.reply_text(
+        "📋 <b>Recent Orders (last 20)</b>\n\n" + "\n".join(lines),
+        parse_mode="HTML",
+    )
+
+
+@_seller_only
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders  = order_store.all()
+    total   = len(orders)
+    active  = sum(1 for o in orders.values() if o.get("status") not in ("Completed", "Cancelled"))
+    revenue = sum(float(o.get("total", 0)) for o in orders.values())
+    await update.message.reply_text(
+        f"📊 <b>System Stats</b>\n\n"
+        f"Total orders: {total}\n"
+        f"Active orders: {active}\n"
+        f"Total revenue: ${revenue:.2f}\n"
+        f"Auto-cleanup: {'✅' if AUTO_CLEANUP_ENABLED else '❌'}",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"🤖 <b>Bot Status</b>\n\n"
+        f"✅ Running\n"
+        f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"📦 Orders: {len(order_store)}\n"
+        f"🏠 Store: {STORE_LOCATION['name']}",
+        parse_mode="HTML",
+    )
+
+
+# ==================== BOT RUNNER ====================
+def run_bot():
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start",        cmd_start))
+    app.add_handler(CommandHandler("status",       cmd_status))
+    app.add_handler(CommandHandler("stats",        cmd_stats))
+    app.add_handler(CommandHandler("orders",       cmd_orders))
+    app.add_handler(CommandHandler("chat",         cmd_chat))
+    app.add_handler(CommandHandler("closechat",    cmd_closechat))
+    app.add_handler(CommandHandler("sendlocation", cmd_sendlocation))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_order))
+    app.add_handler(MessageHandler(filters.LOCATION, handle_location))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
+    app.add_handler(MessageHandler(filters.PHOTO, forward_reply))
+
+    logger.info("🤖 Bot polling started")
+    app.run_polling(allowed_updates=["message", "callback_query"])
+
+
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    flask_app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
+
+
+# ==================== MAIN ====================
 if __name__ == "__main__":
-    print("=" * 50)
-    print("⚠️  IMPORTANT: Ensure webhook is deleted!")
-    print(f"curl -X POST \"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook\"")
-    print("=" * 50)
+    print("=" * 60)
+    print("🚀  BIRD NEST HOUSE — BOT + FLASK")
+    print("=" * 60)
+    print(f"Store  : {STORE_LOCATION['name']}")
+    print(f"Web App: {WEB_APP_URL}")
+    print(f"Cleanup: {'enabled' if AUTO_CLEANUP_ENABLED else 'disabled'} every {CLEANUP_INTERVAL_HOURS}h")
+    print("=" * 60)
+
+    if AUTO_CLEANUP_ENABLED:
+        t = threading.Thread(target=_run_scheduled_cleanup, daemon=True)
+        t.start()
+        logger.info("Auto-cleanup scheduler started")
+
     while True:
         try:
-            print("🚀 Starting bot...")
             flask_thread = threading.Thread(target=run_flask, daemon=True)
             flask_thread.start()
             run_bot()
         except Exception as e:
-            print(f"❌ Bot crashed: {e}")
-            print("🔄 Restarting in 10 seconds...")
+            logger.error("Crash: %s — restarting in 10 s", e)
             time.sleep(10)
         else:
-            print("✅ Bot stopped normally")
+            logger.info("Bot stopped normally")
             break
