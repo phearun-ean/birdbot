@@ -1,6 +1,6 @@
 """
 Bird Nest House — Telegram Bot + Flask Backend
-Rewritten for security, reliability, and clean architecture.
+Fixed: Unlimited chat messaging and dashboard access
 """
 
 import fcntl
@@ -72,9 +72,9 @@ def _require_env(key: str, fallback: str = None) -> str:
 BOT_TOKEN         = _require_env("BOT_TOKEN")
 SELLER_CHAT_ID    = int(_require_env("SELLER_CHAT_ID", "5131306408"))
 WEB_APP_URL       = _require_env("WEB_APP_URL", "https://birdnesttgminiapp.web.app/")
-APP_SECRET        = _require_env("APP_SECRET")          # NO fallback — must be set
-ADMIN_SECRET      = _require_env("ADMIN_SECRET")        # NO fallback — must be set
-ADMIN_PASSWORD    = _require_env("DASHBOARD_PASSWORD")  # NO fallback — must be set
+APP_SECRET        = _require_env("APP_SECRET")
+ADMIN_SECRET      = _require_env("ADMIN_SECRET")
+ADMIN_PASSWORD    = _require_env("DASHBOARD_PASSWORD")
 FLASK_SECRET_KEY  = _require_env("FLASK_SECRET_KEY", secrets.token_hex(32))
 
 STORE_LOCATION = {
@@ -100,9 +100,11 @@ CLEANUP_INTERVAL_HOURS = int(_require_env("CLEANUP_INTERVAL_HOURS", "24"))
 INVOICE_DIR = "invoices"
 QR_DIR      = "qr_codes"
 BACKUP_DIR  = "backups"
+CHAT_DIR    = "chat_sessions"
 ORDERS_FILE = "orders.json"
+CHAT_FILE   = "chat_messages.json"
 
-for _d in (INVOICE_DIR, QR_DIR, BACKUP_DIR):
+for _d in (INVOICE_DIR, QR_DIR, BACKUP_DIR, CHAT_DIR):
     os.makedirs(_d, exist_ok=True)
 
 # ==================== SINGLE-INSTANCE LOCK ====================
@@ -137,7 +139,7 @@ class JsonStore:
             tmp = self._path + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(self._data, f, indent=2)
-            os.replace(tmp, self._path)  # atomic on POSIX
+            os.replace(tmp, self._path)
         except Exception as e:
             logger.error("Failed to save %s: %s", self._path, e)
 
@@ -165,6 +167,7 @@ class JsonStore:
 
 
 order_store = JsonStore(ORDERS_FILE)
+chat_store = JsonStore(CHAT_FILE)  # NEW: Store chat messages
 
 # ==================== PAYMENT HELPERS ====================
 _KHQR_ALIASES = {"khqr", "kh qr", "khqr payment", "abakhqr", "acleda qr"}
@@ -178,6 +181,27 @@ def initial_order_status(payment_method: str) -> str:
     if payment_method.lower() in ("cash on delivery", "cod"):
         return "Pending (COD)"
     return "Paid"
+
+# ==================== CHAT MESSAGE STORAGE ====================
+def save_chat_message(order_id: str, sender: str, message: str, sender_name: str = None):
+    """Save chat message to permanent storage"""
+    key = f"chat_{order_id}"
+    messages = chat_store.get(key, [])
+    messages.append({
+        "order_id": order_id,
+        "sender": sender,
+        "sender_name": sender_name,
+        "message": message,
+        "timestamp": datetime.now().isoformat()
+    })
+    chat_store.set(key, messages)
+    logger.info(f"Chat message saved for order {order_id} from {sender}")
+
+def get_chat_messages(order_id: str, limit: int = 50) -> List[Dict]:
+    """Get chat messages for an order"""
+    key = f"chat_{order_id}"
+    messages = chat_store.get(key, [])
+    return messages[-limit:] if limit else messages
 
 # ==================== QR CODE ====================
 def generate_khqr(order_id: str, amount: float, description: str = "") -> str:
@@ -325,7 +349,6 @@ def send_telegram_document(chat_id: int, document_path: str, caption: str = "") 
 
 # ==================== AUTH HELPERS ====================
 def require_admin_secret(f):
-    """Decorator: reject requests that don't carry the correct X-App-Secret header."""
     from functools import wraps
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -335,7 +358,6 @@ def require_admin_secret(f):
     return wrapper
 
 def require_dashboard_auth(f):
-    """Decorator: redirect to /dashboard login if not authenticated."""
     from functools import wraps
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -365,6 +387,47 @@ limiter = Limiter(
     default_limits=["200 per hour"],
     storage_uri="memory://",
 )
+
+# ==================== CHAT ENDPOINTS ====================
+@flask_app.route("/api/chat/messages/<order_id>", methods=["GET"])
+@require_admin_secret
+def get_chat_messages_api(order_id):
+    """Get all chat messages for an order"""
+    messages = get_chat_messages(order_id)
+    return jsonify({"success": True, "messages": messages})
+
+@flask_app.route("/api/chat/send", methods=["POST"])
+@require_admin_secret
+def send_chat_message_api():
+    """Send a message from seller to customer"""
+    data = request.get_json(silent=True) or {}
+    order_id = data.get("orderId")
+    message = data.get("message")
+    
+    if not order_id or not message:
+        return jsonify({"success": False, "error": "Missing orderId or message"}), 400
+    
+    order = order_store.get(order_id)
+    if not order:
+        return jsonify({"success": False, "error": "Order not found"}), 404
+    
+    buyer_chat_id = order.get("chat_id")
+    if not buyer_chat_id:
+        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
+    
+    # Save message to storage
+    save_chat_message(order_id, "seller", message, "Bird Nest House")
+    
+    # Send to customer via Telegram
+    customer_msg = (
+        f"📨 <b>Message from Bird Nest House</b>\n\n"
+        f"<b>Order:</b> <code>{order_id}</code>\n\n"
+        f"{message}\n\n"
+        f"💡 Reply to this message to continue the conversation."
+    )
+    send_telegram_message(int(buyer_chat_id), customer_msg, "HTML")
+    
+    return jsonify({"success": True})
 
 # ==================== ORDER ENDPOINTS ====================
 @flask_app.route("/api/new-order", methods=["POST", "OPTIONS"])
@@ -449,6 +512,7 @@ def receive_order():
             [{"text": "✅ Mark as Paid",     "callback_data": f"paid_{order_id}"}],
             [{"text": "📄 Mark as Ready",    "callback_data": f"ready_{order_id}"}],
             [{"text": "📍 Send Store Location", "callback_data": f"send_location_{order_id}"}],
+            [{"text": "💬 Reply to Customer", "callback_data": f"reply_{order_id}"}],
             [{"text": "📋 View Order",       "callback_data": f"view_order_{order_id}"}],
         ]
     }
@@ -477,7 +541,13 @@ def receive_order():
 @flask_app.route("/api/orders", methods=["GET"])
 @require_admin_secret
 def api_orders():
-    return jsonify(list(order_store.all().values()))
+    orders = list(order_store.all().values())
+    # Add chat message count to each order
+    for order in orders:
+        order_id = order.get("orderId")
+        messages = get_chat_messages(order_id)
+        order["chat_messages_count"] = len(messages)
+    return jsonify(orders)
 
 
 @flask_app.route("/api/update-status", methods=["POST"])
@@ -509,14 +579,9 @@ def update_status():
 
     return jsonify({"success": True})
 
-
 # ==================== INVOICE & QR ENDPOINTS ====================
 @flask_app.route("/api/invoice/<order_id>", methods=["GET"])
 def get_invoice(order_id):
-    """
-    Public — anyone with the order ID can download the invoice.
-    The order ID now includes a random token, so guessing is not practical.
-    """
     path = os.path.join(INVOICE_DIR, f"invoice_{order_id}.pdf")
     if os.path.exists(path):
         return send_file(path, as_attachment=True, download_name=f"invoice_{order_id}.pdf")
@@ -566,22 +631,35 @@ def get_khqr_instructions(order_id):
     return jsonify({"success": True, "instructions": html})
 
 
-# ==================== STORE ENDPOINT ====================
 @flask_app.route("/api/store/location", methods=["GET"])
 def get_store_location():
     return jsonify({"success": True, "store": STORE_LOCATION})
 
 
-# ==================== MESSAGING ENDPOINT ====================
 @flask_app.route("/api/send-message", methods=["POST"])
 @require_admin_secret
 def send_message():
     data    = request.get_json(silent=True) or {}
-    chat_id = data.get("chatId")
+    order_id = data.get("orderId")
     message = data.get("message")
-    if not chat_id or not message:
-        return jsonify({"success": False, "error": "Missing chatId or message"}), 400
-    ok = send_telegram_message(int(chat_id), f"📢 *Message from Bird Nest House:*\n\n{message}", "Markdown")
+    if not order_id or not message:
+        return jsonify({"success": False, "error": "Missing orderId or message"}), 400
+    
+    order = order_store.get(order_id)
+    if not order:
+        return jsonify({"success": False, "error": "Order not found"}), 404
+    
+    buyer_chat_id = order.get("chat_id")
+    if not buyer_chat_id:
+        return jsonify({"success": False, "error": "No buyer chat ID"}), 404
+    
+    # Save message
+    save_chat_message(order_id, "seller", message, "Bird Nest House")
+    
+    # Send via Telegram
+    ok = send_telegram_message(int(buyer_chat_id), 
+                               f"📢 *Message from Bird Nest House:*\n\n{message}", 
+                               "Markdown")
     return jsonify({"success": ok})
 
 
@@ -605,29 +683,95 @@ def admin_backup():
     orders_backup = os.path.join(BACKUP_DIR, f"orders_backup_{ts}.json")
     with open(orders_backup, "w") as f:
         json.dump(order_store.all(), f, indent=2)
-    return jsonify({"success": True, "backup_file": orders_backup, "timestamp": ts})
+    
+    chat_backup = os.path.join(BACKUP_DIR, f"chat_backup_{ts}.json")
+    with open(chat_backup, "w") as f:
+        json.dump(chat_store.all(), f, indent=2)
+    
+    return jsonify({"success": True, "backup_files": [orders_backup, chat_backup], "timestamp": ts})
 
 
 # ==================== DASHBOARD ====================
 @flask_app.route("/dashboard", methods=["GET", "POST"])
-@limiter.limit("10 per minute")
 def dashboard():
     if request.method == "POST":
         password = request.form.get("password", "")
-        # Constant-time comparison to prevent timing attacks
         if secrets.compare_digest(password, ADMIN_PASSWORD):
             session["dashboard_auth"] = True
             return redirect(url_for("dashboard_home"))
         return "<h2>Wrong password</h2><a href='/dashboard'>Try again</a>", 401
 
+    # Beautiful login page
     return """<!DOCTYPE html>
-<html><head><title>Dashboard Login</title></head>
-<body style="font-family:sans-serif;text-align:center;margin-top:100px;">
-  <form method="post">
-    <label>Password: <input type="password" name="password" required></label>
-    <button type="submit">Login</button>
-  </form>
-</body></html>"""
+<html>
+<head>
+    <title>Bird Nest House - Admin Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .login-card {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+        .logo { font-size: 64px; margin-bottom: 20px; }
+        h2 { color: #333; margin-bottom: 10px; }
+        p { color: #666; margin-bottom: 30px; }
+        input {
+            width: 100%;
+            padding: 14px;
+            margin: 10px 0;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #ff6b00;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: #ff6b00;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: background 0.3s;
+        }
+        button:hover { background: #e65100; }
+        .footer { margin-top: 20px; font-size: 12px; color: #999; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="logo">🐦</div>
+        <h2>Bird Nest House</h2>
+        <p>Admin Dashboard</p>
+        <form method="post">
+            <input type="password" name="password" placeholder="Enter password" required autofocus>
+            <button type="submit">Login to Dashboard</button>
+        </form>
+        <div class="footer">Secure admin access only</div>
+    </div>
+</body>
+</html>"""
 
 
 @flask_app.route("/dashboard/home")
@@ -643,6 +787,7 @@ def health():
         "status":        "running",
         "timestamp":     datetime.now().isoformat(),
         "orders_count":  len(order_store),
+        "chat_messages": sum(len(v) for v in chat_store.all().values()),
         "store":         STORE_LOCATION["name"],
         "cleanup": {
             "chat_retention_days": CHAT_RETENTION_DAYS,
@@ -670,11 +815,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Welcome to Bird Nest House! 🥚\n\n"
         "🇰🇭 Premium bird nest products\n"
-        "✅ Halal Certified | 🏆 5S & Kaizen\n\n"
+        "✅ Halal, GHPs/HACCP Certified | 🏆 5S & Kaizen\n\n"
         "<b>Features:</b>\n"
         "• Place orders easily\n"
         "• Share your location for delivery\n"
-        "• Get store location instantly\n\n"
+        "• Get store location instantly\n"
+        "• Chat with seller about your order\n\n"
         "Tap below to start:",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardMarkup(
@@ -689,7 +835,6 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loc  = update.message.location
     user = update.effective_user
 
-    # Find the most recent active order for this chat
     active_order_id = None
     for oid, order in order_store.all().items():
         if (str(order.get("chat_id")) == str(update.effective_chat.id)
@@ -794,6 +939,7 @@ async def handle_webapp_order(update: Update, context: ContextTypes.DEFAULT_TYPE
                 [InlineKeyboardButton("✅ Mark as Paid",        callback_data=f"paid_{order_id}")],
                 [InlineKeyboardButton("📄 Mark as Ready",       callback_data=f"ready_{order_id}")],
                 [InlineKeyboardButton("📍 Send Store Location", callback_data=f"send_location_{order_id}")],
+                [InlineKeyboardButton("💬 Reply to Customer",   callback_data=f"reply_{order_id}")],
                 [InlineKeyboardButton("📋 View Order",          callback_data=f"view_order_{order_id}")],
             ]),
         )
@@ -806,9 +952,10 @@ async def handle_webapp_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"💰 <b>Total:</b> ${total:.2f}\n"
         f"⭐ <b>Points Earned:</b> {points}\n\n"
         + (
-            "⏳ Verifying KHQR payment. Invoice will be sent once confirmed."
+            "⏳ Verifying KHQR payment. Invoice will be sent once confirmed.\n\n"
+            "💬 You can chat with the seller about your order."
             if is_khqr(payment)
-            else "We will notify you when your order is ready."
+            else "We will notify you when your order is ready.\n\n💬 You can chat with the seller about your order."
         )
     )
     await update.message.reply_text(confirm_text, parse_mode="HTML")
@@ -819,6 +966,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     cb_data = query.data
+
+    # ── reply (start chat) ─────────────────────────────────────────────────────
+    if cb_data.startswith("reply_"):
+        order_id = cb_data[6:]
+        order = order_store.get(order_id)
+        if not order:
+            await query.message.reply_text("⚠️ Order not found.")
+            return
+        
+        context.user_data["reply_to_order"] = order_id
+        
+        # Get recent messages
+        messages = get_chat_messages(order_id, limit=10)
+        chat_history = ""
+        if messages:
+            chat_history = "\n📜 <b>Recent messages:</b>\n"
+            for msg in messages[-5:]:
+                sender = "👤 Customer" if msg.get("sender") == "customer" else "🛒 You"
+                chat_history += f"{sender}: {msg.get('message', '')[:100]}\n"
+        
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text(
+            f"💬 <b>Chat with {order['user_name']}</b>\n"
+            f"📦 Order: <code>{order_id}</code>\n\n"
+            f"{chat_history}\n"
+            f"✏️ Send any message to reply.\n"
+            f"📍 Use /sendlocation {order_id} to share store location.\n\n"
+            f"Type /closechat when done.",
+            parse_mode="HTML",
+        )
+        return
 
     # ── paid ──────────────────────────────────────────────────────────────────
     if cb_data.startswith("paid_"):
@@ -948,6 +1126,9 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = update.message.photo[-1].file_id
         caption = update.message.caption or ""
         try:
+            # Save message to storage
+            save_chat_message(order_id, "seller", f"[Photo] {caption}", "Bird Nest House")
+            
             await context.bot.send_photo(
                 chat_id=int(buyer_chat_id),
                 photo=file_id,
@@ -958,11 +1139,16 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"⚠️ Failed: {e}")
     elif update.message.text:
-        msg_text    = update.message.text
+        msg_text = update.message.text
+        
+        # Save message to storage
+        save_chat_message(order_id, "seller", msg_text, "Bird Nest House")
+        
         customer_msg = (
             f"📨 <b>Message from Bird Nest House</b>\n\n"
             f"<b>Order:</b> <code>{order_id}</code>\n\n"
-            f"{msg_text}"
+            f"{msg_text}\n\n"
+            f"💡 Reply to this message to continue the conversation."
         )
         if send_telegram_message(int(buyer_chat_id), customer_msg, "HTML"):
             await update.message.reply_text(f"✅ Message sent to {user_name}!")
@@ -970,6 +1156,41 @@ async def forward_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Failed to send message.")
     else:
         await update.message.reply_text("Unsupported message type. Send text or photo.")
+
+
+# ── Customer message handler (store incoming messages) ─────────────────────────
+async def handle_customer_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Store customer messages when they reply to seller"""
+    if not update.message or not update.message.text:
+        return
+    
+    # Find which order this customer has
+    chat_id = update.effective_chat.id
+    active_order_id = None
+    
+    for oid, order in order_store.all().items():
+        if str(order.get("chat_id")) == str(chat_id):
+            active_order_id = oid
+            break
+    
+    if not active_order_id:
+        # No active order, ignore
+        return
+    
+    msg_text = update.message.text
+    
+    # Save customer message
+    save_chat_message(active_order_id, "customer", msg_text, 
+                     update.effective_user.first_name or "Customer")
+    
+    # Notify seller
+    seller_msg = (
+        f"💬 <b>New message from {update.effective_user.first_name}</b>\n\n"
+        f"📦 <b>Order:</b> <code>{active_order_id}</code>\n\n"
+        f"<b>Message:</b>\n{msg_text}\n\n"
+        f"Reply using /chat {active_order_id}"
+    )
+    send_telegram_message(SELLER_CHAT_ID, seller_msg, "HTML")
 
 
 # ── Seller commands ────────────────────────────────────────────────────────────
@@ -1023,13 +1244,26 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not order:
         await update.message.reply_text("⚠️ Order not found.")
         return
+    
     context.user_data["reply_to_order"] = order_id
+    
+    # Get chat history
+    messages = get_chat_messages(order_id, limit=20)
+    history = ""
+    if messages:
+        history = "\n📜 <b>Chat History:</b>\n"
+        for msg in messages[-10:]:
+            sender = "👤 Customer" if msg.get("sender") == "customer" else "🛒 You"
+            time_str = datetime.fromisoformat(msg.get("timestamp", datetime.now().isoformat())).strftime("%H:%M")
+            history += f"{sender} ({time_str}): {msg.get('message', '')[:100]}\n"
+    
     await update.message.reply_text(
         f"💬 <b>Chat with {order['user_name']}</b>\n"
         f"📦 Order: <code>{order_id}</code>\n\n"
-        "✏️ Send any text or photo to reply.\n"
+        f"{history}\n"
+        f"✏️ Send any text or photo to reply.\n"
         f"📍 Use /sendlocation {order_id} to share store location.\n\n"
-        "Use /closechat when done.",
+        f"Use /closechat when done.",
         parse_mode="HTML",
     )
 
@@ -1051,7 +1285,8 @@ async def cmd_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = []
     for oid, o in list(orders.items())[-20:]:
-        lines.append(f"• <code>{oid}</code> — {o.get('user_name','?')} — ${o.get('total',0):.2f} — {o.get('status','?')}")
+        msg_count = len(get_chat_messages(oid))
+        lines.append(f"• <code>{oid}</code> — {o.get('user_name','?')} — ${o.get('total',0):.2f} — {o.get('status','?')} — 💬{msg_count}")
     await update.message.reply_text(
         "📋 <b>Recent Orders (last 20)</b>\n\n" + "\n".join(lines),
         parse_mode="HTML",
@@ -1064,11 +1299,13 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total   = len(orders)
     active  = sum(1 for o in orders.values() if o.get("status") not in ("Completed", "Cancelled"))
     revenue = sum(float(o.get("total", 0)) for o in orders.values())
+    chat_msgs = sum(len(v) for v in chat_store.all().values())
     await update.message.reply_text(
         f"📊 <b>System Stats</b>\n\n"
         f"Total orders: {total}\n"
         f"Active orders: {active}\n"
         f"Total revenue: ${revenue:.2f}\n"
+        f"Chat messages: {chat_msgs}\n"
         f"Auto-cleanup: {'✅' if AUTO_CLEANUP_ENABLED else '❌'}",
         parse_mode="HTML",
     )
@@ -1080,6 +1317,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Running\n"
         f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"📦 Orders: {len(order_store)}\n"
+        f"💬 Chat sessions: {len([k for k in chat_store.all().keys() if k.startswith('chat_')])}\n"
         f"🏠 Store: {STORE_LOCATION['name']}",
         parse_mode="HTML",
     )
@@ -1098,6 +1336,7 @@ def run_bot():
     app.add_handler(CommandHandler("sendlocation", cmd_sendlocation))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_order))
     app.add_handler(MessageHandler(filters.LOCATION, handle_location))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_customer_message))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_reply))
     app.add_handler(MessageHandler(filters.PHOTO, forward_reply))
@@ -1118,6 +1357,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print(f"Store  : {STORE_LOCATION['name']}")
     print(f"Web App: {WEB_APP_URL}")
+    print(f"Dashboard: http://localhost:{os.environ.get('PORT', 5000)}/dashboard")
     print(f"Cleanup: {'enabled' if AUTO_CLEANUP_ENABLED else 'disabled'} every {CLEANUP_INTERVAL_HOURS}h")
     print("=" * 60)
 
