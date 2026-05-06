@@ -1,6 +1,6 @@
 """
 Bird Nest House — Telegram Bot + Flask Backend
-Complete working version with KHQR integration and chat functionality
+Complete working version with KHQR integration, chat functionality, and inventory management
 """
 
 import fcntl
@@ -82,9 +82,7 @@ STORE_LOCATION = {
     "latitude":  float(_require_env("STORE_LATITUDE", "11.58145")),
     "longitude": float(_require_env("STORE_LONGITUDE", "104.90451")),
     "phone":     _require_env("STORE_PHONE", "+855 78 999 685"),
-    # KHQR Image URL from Firebase Storage
     "khqr_image_url": "https://firebasestorage.googleapis.com/v0/b/birdnesttgminiapp.firebasestorage.app/o/ABA_KHQR.jpeg?alt=media&token=7eb2c7a1-720c-4758-9b2a-5f4f69fac285",
-    # KHQR Account Details
     "khqr_usd_account": "000 158 431",
     "khqr_khr_account": "002 750 675",
     "khqr_account_name": "PHEARUN EAN",
@@ -108,6 +106,7 @@ BACKUP_DIR  = "backups"
 CHAT_DIR    = "chat_sessions"
 ORDERS_FILE = "orders.json"
 CHAT_FILE   = "chat_messages.json"
+PRODUCTS_FILE = "products.json"
 
 for _d in (INVOICE_DIR, QR_DIR, BACKUP_DIR, CHAT_DIR):
     os.makedirs(_d, exist_ok=True)
@@ -173,6 +172,60 @@ class JsonStore:
 
 order_store = JsonStore(ORDERS_FILE)
 chat_store = JsonStore(CHAT_FILE)
+product_store = JsonStore(PRODUCTS_FILE)
+
+# Initialize default products if none exist
+if len(product_store) == 0:
+    default_products = {
+        "1": {
+            "id": 1,
+            "name": "Bird Nest 75ml (general)",
+            "description": "100% pure bird's nests, ready to drink",
+            "price": 5.00,
+            "category": "bird nest drinks",
+            "stock": 100,
+            "image": "https://i.postimg.cc/rw3v9gyK/75ml.png"
+        },
+        "2": {
+            "id": 2,
+            "name": "Bird Nest 75ml (6 bottles)",
+            "description": "100% pure bird's nests",
+            "price": 30.00,
+            "category": "bird nest drinks",
+            "stock": 50,
+            "image": "https://i.postimg.cc/Dw89sRhZ/75ml_6bottle.png"
+        },
+        "3": {
+            "id": 3,
+            "name": "Bird Nest Grade A (100g)",
+            "description": "Dried, shelf-life 3 years",
+            "price": 290.00,
+            "category": "Dried bird nest",
+            "stock": 25,
+            "image": "https://i.postimg.cc/Pq6bSyBf/Grade_A.png"
+        },
+        "4": {
+            "id": 4,
+            "name": "Bird Nest Konkat (100g)",
+            "description": "Dried high quality",
+            "price": 250.00,
+            "category": "Dried bird nest",
+            "stock": 20,
+            "image": "https://i.postimg.cc/zXWNCP93/Konkat.png"
+        },
+        "5": {
+            "id": 5,
+            "name": "Bird Nest 100ml",
+            "description": "100% pure",
+            "price": 10.00,
+            "category": "bird nest drinks",
+            "stock": 75,
+            "image": "https://i.postimg.cc/XYpRFtW7/100ml.png"
+        }
+    }
+    for key, value in default_products.items():
+        product_store.set(key, value)
+    logger.info("Initialized default products")
 
 # ==================== PAYMENT HELPERS ====================
 _KHQR_ALIASES = {"khqr", "kh qr", "khqr payment", "abakhqr", "acleda qr"}
@@ -384,24 +437,68 @@ CORS(flask_app, resources={
 
 # ==================== API ENDPOINTS ====================
 
-@flask_app.route("/api/store/location", methods=["GET"])
-def get_store_location():
-    """Return store information including KHQR image URL"""
-    return jsonify({
-        "success": True, 
-        "store": STORE_LOCATION
-    })
+# ==================== INVENTORY MANAGEMENT ENDPOINTS ====================
 
-@flask_app.route("/api/khqr-image", methods=["GET"])
-def get_khqr_image():
-    """Return KHQR image URL directly"""
-    return jsonify({
-        "success": True,
-        "image_url": STORE_LOCATION["khqr_image_url"],
-        "usd_account": STORE_LOCATION["khqr_usd_account"],
-        "khr_account": STORE_LOCATION["khqr_khr_account"],
-        "account_name": STORE_LOCATION["khqr_account_name"]
-    })
+@flask_app.route("/api/products", methods=["GET"])
+def get_products():
+    """Get all products"""
+    products = list(product_store.all().values())
+    return jsonify({"success": True, "products": products})
+
+@flask_app.route("/api/products", methods=["POST"])
+def add_product():
+    """Add a new product"""
+    data = request.get_json(silent=True) or {}
+    
+    # Generate new ID
+    all_products = product_store.all()
+    new_id = max([int(p.get("id", 0)) for p in all_products.values()] + [0]) + 1
+    
+    product = {
+        "id": new_id,
+        "name": data.get("name", ""),
+        "description": data.get("description", ""),
+        "price": float(data.get("price", 0)),
+        "category": data.get("category", "bird nest drinks"),
+        "stock": int(data.get("stock", 0)),
+        "image": data.get("image", "")
+    }
+    
+    product_store.set(str(new_id), product)
+    logger.info(f"Product added: {product['name']}")
+    return jsonify({"success": True, "product": product})
+
+@flask_app.route("/api/products/<int:product_id>", methods=["PUT"])
+def update_product(product_id):
+    """Update a product"""
+    data = request.get_json(silent=True) or {}
+    
+    existing = product_store.get(str(product_id))
+    if not existing:
+        return jsonify({"success": False, "error": "Product not found"}), 404
+    
+    updated = {
+        "id": product_id,
+        "name": data.get("name", existing.get("name")),
+        "description": data.get("description", existing.get("description")),
+        "price": float(data.get("price", existing.get("price"))),
+        "category": data.get("category", existing.get("category")),
+        "stock": int(data.get("stock", existing.get("stock"))),
+        "image": data.get("image", existing.get("image"))
+    }
+    
+    product_store.set(str(product_id), updated)
+    logger.info(f"Product updated: {updated['name']}")
+    return jsonify({"success": True, "product": updated})
+
+@flask_app.route("/api/products/<int:product_id>", methods=["DELETE"])
+def delete_product(product_id):
+    """Delete a product"""
+    product_store.delete(str(product_id))
+    logger.info(f"Product deleted: ID {product_id}")
+    return jsonify({"success": True})
+
+# ==================== CHAT ENDPOINTS ====================
 
 @flask_app.route("/api/chat/messages/<order_id>", methods=["GET"])
 def get_chat_messages_api(order_id):
@@ -482,6 +579,27 @@ def seller_chat_reply():
     
     return jsonify({"success": True, "message": "Reply sent"})
 
+# ==================== ORDER ENDPOINTS ====================
+
+@flask_app.route("/api/store/location", methods=["GET"])
+def get_store_location():
+    """Return store information including KHQR image URL"""
+    return jsonify({
+        "success": True, 
+        "store": STORE_LOCATION
+    })
+
+@flask_app.route("/api/khqr-image", methods=["GET"])
+def get_khqr_image():
+    """Return KHQR image URL directly"""
+    return jsonify({
+        "success": True,
+        "image_url": STORE_LOCATION["khqr_image_url"],
+        "usd_account": STORE_LOCATION["khqr_usd_account"],
+        "khr_account": STORE_LOCATION["khqr_khr_account"],
+        "account_name": STORE_LOCATION["khqr_account_name"]
+    })
+
 @flask_app.route("/api/new-order", methods=["POST", "OPTIONS"])
 def receive_order():
     if request.method == "OPTIONS":
@@ -530,6 +648,16 @@ def receive_order():
         "source":          "web",
     }
     order_store.set(order_id, order_record)
+
+    # Update stock for items ordered
+    for item in items:
+        product = product_store.get(str(item.get("id")))
+        if product:
+            current_stock = product.get("stock", 0)
+            qty = item.get("quantity", 1)
+            new_stock = max(0, current_stock - qty)
+            product["stock"] = new_stock
+            product_store.set(str(item.get("id")), product)
 
     if is_khqr(payment):
         try:
@@ -761,6 +889,7 @@ def health():
         "status":        "running",
         "timestamp":     datetime.now().isoformat(),
         "orders_count":  len(order_store),
+        "products_count": len(product_store),
         "chat_messages": sum(len(v) for v in chat_store.all().values()),
         "store":         STORE_LOCATION["name"],
         "khqr_available": bool(STORE_LOCATION.get("khqr_image_url")),
@@ -880,6 +1009,16 @@ async def handle_webapp_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         "source":          "bot",
     }
     order_store.set(order_id, order_record)
+
+    # Update stock for items ordered
+    for item in items:
+        product = product_store.get(str(item.get("id")))
+        if product:
+            current_stock = product.get("stock", 0)
+            qty = item.get("quantity", 1)
+            new_stock = max(0, current_stock - qty)
+            product["stock"] = new_stock
+            product_store.set(str(item.get("id")), product)
 
     if is_khqr(payment):
         try:
@@ -1270,6 +1409,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Running\n"
         f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"📦 Orders: {len(order_store)}\n"
+        f"📦 Products: {len(product_store)}\n"
         f"💬 Chat sessions: {len([k for k in chat_store.all().keys() if k.startswith('chat_')])}\n"
         f"🏠 Store: {STORE_LOCATION['name']}\n"
         f"🇰🇭 KHQR: {'✅' if STORE_LOCATION.get('khqr_image_url') else '❌'}",
@@ -1309,6 +1449,7 @@ if __name__ == "__main__":
     print(f"Store  : {STORE_LOCATION['name']}")
     print(f"Web App: {WEB_APP_URL}")
     print(f"Dashboard: http://localhost:{os.environ.get('PORT', 5000)}/dashboard")
+    print(f"Products: {len(product_store)} items in inventory")
     print(f"KHQR Image: {'✅ Loaded' if STORE_LOCATION.get('khqr_image_url') else '❌ Missing'}")
     print(f"Cleanup: {'enabled' if AUTO_CLEANUP_ENABLED else 'disabled'} every {CLEANUP_INTERVAL_HOURS}h")
     print("=" * 60)
