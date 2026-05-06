@@ -6,87 +6,32 @@
     <title>Bird Nest House - Admin Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-            background: #f5f5f5; 
-            padding: 20px; 
-        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
         .container { max-width: 1400px; margin: 0 auto; }
         
         /* Header */
-        .header { 
-            background: linear-gradient(135deg, #ff6b00 0%, #e65100 100%); 
-            color: white; 
-            padding: 20px; 
-            border-radius: 15px; 
-            margin-bottom: 20px; 
-        }
+        .header { background: linear-gradient(135deg, #ff6b00 0%, #e65100 100%); color: white; padding: 20px; border-radius: 15px; margin-bottom: 20px; }
         .header h1 { font-size: 1.8rem; margin-bottom: 5px; }
         .header p { opacity: 0.9; }
-        .logout-btn { 
-            float: right; 
-            background: rgba(255,255,255,0.2); 
-            border: none; 
-            color: white; 
-            padding: 8px 16px; 
-            border-radius: 20px; 
-            cursor: pointer; 
-            margin-top: -40px;
-        }
+        .logout-btn { float: right; background: rgba(255,255,255,0.2); border: none; color: white; padding: 8px 16px; border-radius: 20px; cursor: pointer; margin-top: -40px; }
         .logout-btn:hover { background: rgba(255,255,255,0.3); }
         
+        /* Stats Cards */
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: white; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s; }
+        .stat-card:hover { transform: translateY(-2px); }
+        .stat-value { font-size: 2rem; font-weight: bold; color: #ff6b00; }
+        .stat-label { color: #666; margin-top: 5px; font-size: 0.9rem; }
+        .stat-change { font-size: 0.75rem; margin-top: 5px; color: #28a745; }
+        
         /* Tabs */
-        .tabs { 
-            display: flex; 
-            gap: 10px; 
-            margin-bottom: 20px; 
-            background: white; 
-            padding: 10px; 
-            border-radius: 15px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .tab-btn { 
-            flex: 1; 
-            padding: 12px; 
-            border: none; 
-            background: #f0f0f0; 
-            border-radius: 10px; 
-            cursor: pointer; 
-            font-size: 16px;
-            font-weight: 600;
-            transition: all 0.3s;
-        }
-        .tab-btn.active { 
-            background: #ff6b00; 
-            color: white; 
-        }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; background: white; padding: 10px; border-radius: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .tab-btn { flex: 1; padding: 12px; border: none; background: #f0f0f0; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: 600; transition: all 0.3s; }
+        .tab-btn.active { background: #ff6b00; color: white; }
         .tab-btn:hover:not(.active) { background: #e0e0e0; }
         
-        /* Stats Cards */
-        .stats { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); 
-            gap: 15px; 
-            margin-bottom: 20px; 
-        }
-        .stat-card { 
-            background: white; 
-            padding: 20px; 
-            border-radius: 15px; 
-            text-align: center; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
-        }
-        .stat-value { font-size: 2rem; font-weight: bold; color: #ff6b00; }
-        .stat-label { color: #666; margin-top: 5px; }
-        
         /* Tables */
-        .table-container { 
-            background: white; 
-            border-radius: 15px; 
-            overflow-x: auto; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
-            margin-bottom: 20px;
-        }
+        .table-container { background: white; border-radius: 15px; overflow-x: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
         table { width: 100%; border-collapse: collapse; min-width: 800px; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
         th { background: #f8f9fa; color: #333; font-weight: 600; position: sticky; top: 0; }
@@ -99,15 +44,7 @@
         .status-completed { background: #6c757d; color: white; }
         
         /* Buttons */
-        .btn { 
-            padding: 6px 12px; 
-            border: none; 
-            border-radius: 8px; 
-            cursor: pointer; 
-            font-size: 0.85rem; 
-            margin: 2px; 
-            transition: all 0.2s;
-        }
+        .btn { padding: 6px 12px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85rem; margin: 2px; transition: all 0.2s; }
         .btn-primary { background: #ff6b00; color: white; }
         .btn-success { background: #28a745; color: white; }
         .btn-info { background: #17a2b8; color: white; }
@@ -116,175 +53,101 @@
         .btn-sm { padding: 4px 8px; font-size: 0.75rem; }
         
         /* Chat Box */
-        .chat-box { 
-            position: fixed; 
-            bottom: 20px; 
-            right: 20px; 
-            width: 380px; 
-            height: 500px; 
-            background: white; 
-            border-radius: 15px; 
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
-            display: none; 
-            flex-direction: column; 
-            z-index: 1000; 
-        }
-        .chat-header { 
-            background: #ff6b00; 
-            color: white; 
-            padding: 12px; 
-            border-radius: 15px 15px 0 0; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            cursor: pointer;
-        }
+        .chat-box { position: fixed; bottom: 20px; right: 20px; width: 380px; height: 500px; background: white; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; flex-direction: column; z-index: 1000; }
+        .chat-header { background: #ff6b00; color: white; padding: 12px; border-radius: 15px 15px 0 0; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
         .chat-header span:last-child { cursor: pointer; font-size: 20px; }
         .chat-messages { flex: 1; overflow-y: auto; padding: 12px; background: #fafafa; }
-        .chat-input { display: flex; padding: 12px; border-top: 1px solid #eee; background: white; }
+        .chat-input { display: flex; padding: 12px; border-top: 1px solid #eee; background: white; border-radius: 0 0 15px 15px; }
         .chat-input input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 8px; margin-right: 8px; }
         .chat-input input:focus { outline: none; border-color: #ff6b00; }
+        .chat-badge { background: #ff6b00; color: white; border-radius: 10px; padding: 2px 8px; font-size: 11px; margin-left: 5px; }
         
         /* Message Bubbles */
         .message-bubble { margin-bottom: 12px; }
         .message-bubble.customer { text-align: left; }
         .message-bubble.seller { text-align: right; }
-        .message-content { 
-            display: inline-block; 
-            padding: 8px 12px; 
-            border-radius: 12px; 
-            max-width: 80%; 
-            word-wrap: break-word; 
-        }
+        .message-content { display: inline-block; padding: 8px 12px; border-radius: 12px; max-width: 80%; word-wrap: break-word; }
         .message-bubble.customer .message-content { background: #e9ecef; color: #000; }
         .message-bubble.seller .message-content { background: #ff6b00; color: #fff; }
         .message-time { font-size: 0.7rem; color: #888; margin-top: 4px; }
-        .chat-badge { 
-            background: #ff6b00; 
-            color: white; 
-            border-radius: 10px; 
-            padding: 2px 8px; 
-            font-size: 11px; 
-            margin-left: 5px; 
-        }
         
         /* Modal */
-        .modal { 
-            position: fixed; 
-            top: 0; 
-            left: 0; 
-            right: 0; 
-            bottom: 0; 
-            background: rgba(0,0,0,0.5); 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            z-index: 2000; 
-        }
-        .modal-content { 
-            background: white; 
-            padding: 25px; 
-            border-radius: 20px; 
-            width: 90%; 
-            max-width: 500px; 
-            max-height: 85vh; 
-            overflow-y: auto; 
-        }
-        .modal-content input, 
-        .modal-content select, 
-        .modal-content textarea { 
-            width: 100%; 
-            padding: 10px; 
-            margin: 8px 0; 
-            border: 1px solid #ddd; 
-            border-radius: 10px; 
-        }
+        .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 2000; }
+        .modal-content { background: white; padding: 25px; border-radius: 20px; width: 90%; max-width: 500px; max-height: 85vh; overflow-y: auto; }
+        .modal-content input, .modal-content select, .modal-content textarea { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 10px; }
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: 600; color: #333; }
         
-        /* Refresh Button */
-        .refresh-btn { 
-            background: #ff6b00; 
-            color: white; 
-            border: none; 
-            padding: 10px 20px; 
-            border-radius: 8px; 
-            cursor: pointer; 
-            margin-bottom: 15px; 
-        }
+        /* Product Image */
+        .product-image { width: 50px; height: 50px; object-fit: cover; border-radius: 8px; }
+        .product-image-cell { text-align: center; }
         
-        /* Toast Notification */
-        .toast { 
-            position: fixed; 
-            bottom: 20px; 
-            left: 20px; 
-            background: #28a745; 
-            color: white; 
-            padding: 12px 20px; 
-            border-radius: 10px; 
-            z-index: 3000; 
-            animation: fadeOut 3s forwards;
-        }
+        /* Refresh Button */
+        .refresh-btn { background: #ff6b00; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin-bottom: 15px; font-size: 14px; }
+        .refresh-btn:hover { background: #e65100; }
+        
+        /* Toast */
+        .toast { position: fixed; bottom: 20px; left: 20px; background: #28a745; color: white; padding: 12px 20px; border-radius: 10px; z-index: 3000; animation: fadeOut 3s forwards; }
         @keyframes fadeOut { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
         
-        /* Responsive */
+        /* Analytics Charts */
+        .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .analytics-card { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .analytics-card h3 { margin-bottom: 15px; color: #333; border-bottom: 2px solid #ff6b00; padding-bottom: 10px; display: inline-block; }
+        .top-product-list { list-style: none; }
+        .top-product-list li { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
+        .product-rank { font-weight: bold; color: #ff6b00; width: 30px; }
+        .product-name { flex: 1; }
+        .product-sales { font-weight: bold; color: #28a745; }
+        
+        .progress-bar { background: #e9ecef; border-radius: 10px; height: 30px; overflow: hidden; margin: 10px 0; }
+        .progress-fill { background: #ff6b00; height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; color: white; font-size: 12px; font-weight: bold; border-radius: 10px; }
+        
+        .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #ff6b00; border-radius: 50%; animation: spin 1s linear infinite; margin-left: 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .action-buttons { display: flex; gap: 5px; flex-wrap: wrap; }
+        
         @media (max-width: 768px) {
             body { padding: 10px; }
             .stats { grid-template-columns: repeat(2, 1fr); }
             .chat-box { width: 95%; right: 2.5%; left: 2.5%; bottom: 10px; height: 70vh; }
             .btn { padding: 4px 8px; font-size: 0.75rem; }
+            .analytics-grid { grid-template-columns: 1fr; }
         }
-        
-        /* Product Image Preview */
-        .product-image-preview { 
-            width: 50px; 
-            height: 50px; 
-            object-fit: cover; 
-            border-radius: 8px; 
-        }
-        .product-image-cell { text-align: center; }
-        
-        /* Action Buttons Group */
-        .action-buttons { display: flex; gap: 5px; flex-wrap: wrap; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🐦 Bird Nest House Admin Dashboard</h1>
-            <p>Manage orders, inventory, and customer chat</p>
+            <p>Manage orders, inventory, analytics, and customer chat</p>
             <button class="logout-btn" onclick="logout()">🚪 Logout</button>
         </div>
         
-        <!-- Stats Cards -->
         <div class="stats" id="stats">
-            <div class="stat-card">
+            <div class="stat-card" onclick="switchTab('orders')">
                 <div class="stat-value" id="totalOrders">0</div>
                 <div class="stat-label">Total Orders</div>
+                <div class="stat-change" id="orderChange">📈 +0%</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" onclick="switchTab('orders')">
                 <div class="stat-value" id="pendingOrders">0</div>
                 <div class="stat-label">Pending</div>
+                <div class="stat-change" id="pendingChange">⏳ Awaiting</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-value" id="paidOrders">0</div>
-                <div class="stat-label">Paid</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="readyOrders">0</div>
-                <div class="stat-label">Ready</div>
-            </div>
-            <div class="stat-card">
+            <div class="stat-card" onclick="switchTab('inventory')">
                 <div class="stat-value" id="totalProducts">0</div>
                 <div class="stat-label">Products</div>
+                <div class="stat-change" id="lowStockBadge">✅ In Stock</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-value" id="lowStock">0</div>
-                <div class="stat-label">Low Stock</div>
+            <div class="stat-card" onclick="switchTab('analytics')">
+                <div class="stat-value" id="totalRevenue">$0</div>
+                <div class="stat-label">Total Revenue</div>
+                <div class="stat-change" id="avgOrderValue">$0 avg</div>
             </div>
         </div>
         
-        <!-- Tabs -->
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('orders')">📦 Orders</button>
             <button class="tab-btn" onclick="switchTab('inventory')">📦 Inventory</button>
@@ -297,18 +160,10 @@
             <div class="table-container">
                 <table id="ordersTable">
                     <thead>
-                        <tr>
-                            <th>Order ID</th>
-                            <th>Customer</th>
-                            <th>Total</th>
-                            <th>Payment</th>
-                            <th>Status</th>
-                            <th>Chat</th>
-                            <th>Actions</th>
-                        </tr>
+                        <tr><th>Order ID</th><th>Customer</th><th>Total</th><th>Payment</th><th>Status</th><th>Chat</th><th>Actions</th></tr>
                     </thead>
                     <tbody id="ordersBody">
-                        <tr><td colspan="7" style="text-align:center;">Loading orders...</td></tr>
+                        <tr><td colspan="7" style="text-align:center;">Loading orders... <span class="spinner"></span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -318,24 +173,15 @@
         <div id="inventoryTab" class="tab-content" style="display:none;">
             <div style="margin-bottom: 15px;">
                 <button class="refresh-btn" onclick="loadProducts()">🔄 Refresh Products</button>
-                <button class="refresh-btn" onclick="openProductModal()" style="background: #28a745;">➕ Add Product</button>
+                <button class="refresh-btn" onclick="openAddProductModal()" style="background: #28a745;">➕ Add Product</button>
             </div>
             <div class="table-container">
                 <table id="productsTable">
                     <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Image</th>
-                            <th>Name</th>
-                            <th>Category</th>
-                            <th>Price</th>
-                            <th>Stock</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
+                        <tr><th>ID</th><th>Image</th><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr>
                     </thead>
                     <tbody id="productsBody">
-                        <tr><td colspan="8" style="text-align:center;">Loading products...</td></tr>
+                        <tr><td colspan="8" style="text-align:center;">Loading products... <span class="spinner"></span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -343,23 +189,71 @@
         
         <!-- Analytics Tab -->
         <div id="analyticsTab" class="tab-content" style="display:none;">
-            <div class="stats" style="margin-bottom: 20px;">
-                <div class="stat-card">
-                    <div class="stat-value" id="totalRevenue">$0</div>
-                    <div class="stat-label">Total Revenue</div>
+            <button class="refresh-btn" onclick="loadAnalytics()">🔄 Refresh Analytics</button>
+            
+            <div class="analytics-grid">
+                <div class="analytics-card">
+                    <h3>📈 Sales Overview</h3>
+                    <div class="stat-card" style="margin-bottom: 15px;">
+                        <div class="stat-value" id="analyticsRevenue">$0</div>
+                        <div class="stat-label">Total Revenue</div>
+                    </div>
+                    <div class="stat-card" style="margin-bottom: 15px;">
+                        <div class="stat-value" id="analyticsOrders">0</div>
+                        <div class="stat-label">Total Orders</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="analyticsAvgOrder">$0</div>
+                        <div class="stat-label">Average Order Value</div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="avgOrderValue">$0</div>
-                    <div class="stat-label">Avg Order Value</div>
+                
+                <div class="analytics-card">
+                    <h3>🏆 Top Selling Products</h3>
+                    <div id="topProductsList" style="max-height: 300px; overflow-y: auto;">
+                        <div style="text-align:center;color:#999;padding:20px;">Loading...</div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="topProduct"></div>
-                    <div class="stat-label">Top Product</div>
+                
+                <div class="analytics-card">
+                    <h3>📊 Order Status Distribution</h3>
+                    <div id="statusDistribution">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="pendingFill" style="width: 0%;">Pending 0%</div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="paidFill" style="width: 0%; background: #28a745;">Paid 0%</div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="readyFill" style="width: 0%; background: #17a2b8;">Ready 0%</div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="completedFill" style="width: 0%; background: #6c757d;">Completed 0%</div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <div class="table-container">
-                <h3 style="padding: 15px;">📈 Recent Orders</h3>
-                <div id="recentOrdersChart"></div>
+                
+                <div class="analytics-card">
+                    <h3>💰 Payment Methods</h3>
+                    <div id="paymentMethods">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="khqrFill" style="width: 0%; background: #D81B60;">KHQR 0%</div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="codFill" style="width: 0%; background: #fd7e14;">Cash on Delivery 0%</div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="cardFill" style="width: 0%; background: #ff6b00;">Card 0%</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="analytics-card">
+                    <h3>📅 Recent Activity</h3>
+                    <div id="recentActivity" style="max-height: 300px; overflow-y: auto;">
+                        <div style="text-align:center;color:#999;padding:20px;">Loading...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -380,7 +274,7 @@
     </div>
     
     <!-- Product Modal -->
-    <div id="productModal" class="modal" style="display:none;">
+    <div id="productModal" class="modal">
         <div class="modal-content">
             <h3 id="productModalTitle">Add New Product</h3>
             <div class="form-group">
@@ -417,39 +311,41 @@
             </div>
         </div>
     </div>
-    
+
     <script>
         const BACKEND_URL = "https://birdbot-5sgv.onrender.com";
-        const ADMIN_SECRET = "birdnest-secret-2024";
-        
         let currentOrderId = null;
         let chatRefreshInterval = null;
         let editingProductId = null;
-        
-        // ==================== TAB SWITCHING ====================
+
+        // Tab switching
         function switchTab(tabName) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelector(`.tab-btn[onclick="switchTab('${tabName}')"]`).classList.add('active');
-            
             document.getElementById('ordersTab').style.display = tabName === 'orders' ? 'block' : 'none';
             document.getElementById('inventoryTab').style.display = tabName === 'inventory' ? 'block' : 'none';
             document.getElementById('analyticsTab').style.display = tabName === 'analytics' ? 'block' : 'none';
-            
             if (tabName === 'orders') loadOrders();
             if (tabName === 'inventory') loadProducts();
             if (tabName === 'analytics') loadAnalytics();
         }
-        
+
         // ==================== ORDERS ====================
         async function loadOrders() {
             try {
-                const response = await fetch(`${BACKEND_URL}/api/orders`);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000);
+                const response = await fetch(`${BACKEND_URL}/api/orders`, { signal: controller.signal });
+                clearTimeout(timeoutId);
                 const orders = await response.json();
                 
                 document.getElementById('totalOrders').textContent = orders.length;
-                document.getElementById('pendingOrders').textContent = orders.filter(o => o.status && o.status.includes('Pending')).length;
-                document.getElementById('paidOrders').textContent = orders.filter(o => o.status === 'Paid').length;
-                document.getElementById('readyOrders').textContent = orders.filter(o => o.status === 'Ready').length;
+                const pending = orders.filter(o => o.status && o.status.includes('Pending')).length;
+                document.getElementById('pendingOrders').textContent = pending;
+                const totalRevenue = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+                document.getElementById('totalRevenue').textContent = `$${totalRevenue.toFixed(2)}`;
+                const avgOrder = orders.length > 0 ? totalRevenue / orders.length : 0;
+                document.getElementById('avgOrderValue').innerHTML = `$${avgOrder.toFixed(2)} avg`;
                 
                 const tbody = document.getElementById('ordersBody');
                 if (orders.length === 0) {
@@ -481,10 +377,10 @@
                 }).join('');
             } catch(e) {
                 console.error('Failed to load orders:', e);
-                document.getElementById('ordersBody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:red;">Failed to load orders</td></tr>';
+                document.getElementById('ordersBody').innerHTML = `<tr><td colspan="7" style="text-align:center;color:red;">Failed to load orders. <button onclick="loadOrders()" style="margin-left:10px;">Retry</button></td></tr>`;
             }
         }
-        
+
         async function updateStatus(orderId, status) {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/update-status`, {
@@ -495,12 +391,11 @@
                 if (response.ok) {
                     showNotification(`Order ${orderId} marked as ${status}`);
                     loadOrders();
+                    loadAnalytics();
                 }
-            } catch(e) {
-                console.error('Update status error:', e);
-            }
+            } catch(e) { console.error(e); }
         }
-        
+
         function getStatusClass(status) {
             if (!status) return 'pending';
             if (status.toLowerCase().includes('pending')) return 'pending';
@@ -508,27 +403,24 @@
             if (status.toLowerCase() === 'ready') return 'ready';
             return 'pending';
         }
-        
+
         // ==================== INVENTORY ====================
         async function loadProducts() {
             try {
-                // Try to load from Firebase first
-                let products = [];
-                if (window.loadProducts) {
-                    products = await window.loadProducts();
-                }
-                
-                // If no products from Firebase, use default
-                if (!products || products.length === 0) {
-                    products = getDefaultProducts();
-                }
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000);
+                const response = await fetch(`${BACKEND_URL}/api/products`, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                const data = await response.json();
+                const products = data.success ? data.products : (Array.isArray(data) ? data : []);
                 
                 document.getElementById('totalProducts').textContent = products.length;
-                document.getElementById('lowStock').textContent = products.filter(p => p.stock < 10 && p.stock > 0).length;
+                const lowStock = products.filter(p => p.stock < 10 && p.stock > 0).length;
+                document.getElementById('lowStockBadge').innerHTML = lowStock > 0 ? `⚠️ ${lowStock} low stock` : '✅ In Stock';
                 
                 const tbody = document.getElementById('productsBody');
                 if (products.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No products yet. Click "Add Product" to get started.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No products. Click "Add Product" to get started.</td></tr>';
                     return;
                 }
                 
@@ -539,12 +431,10 @@
                     return `
                         <tr>
                             <td>${product.id}</td>
-                            <td class="product-image-cell">
-                                ${product.image ? `<img src="${product.image}" class="product-image-preview" onerror="this.style.display='none'">` : '📦'}
-                            </td>
-                            <td><strong>${escapeHtml(product.name)}</strong></td>
+                            <td class="product-image-cell">${product.image ? `<img src="${product.image}" class="product-image" onerror="this.style.display='none'">` : '📦'}</td>
+                            <td><strong>${escapeHtml(product.name)}</strong><br><small>${escapeHtml(product.description || '')}</small></td>
                             <td>${escapeHtml(product.category)}</td>
-                            <td>$${product.price.toFixed(2)}</td>
+                            <td>$${parseFloat(product.price).toFixed(2)}</td>
                             <td style="color: ${stockColor}; font-weight: bold;">${product.stock}</td>
                             <td><span class="status" style="background: ${stockColor}; color: white;">${stockStatus}</span></td>
                             <td class="action-buttons">
@@ -556,70 +446,45 @@
                 }).join('');
             } catch(e) {
                 console.error('Failed to load products:', e);
-                displayDefaultProducts();
+                document.getElementById('productsBody').innerHTML = `<tr><td colspan="8" style="text-align:center;color:red;">Failed to load products. <button onclick="loadProducts()">Retry</button></td></tr>`;
             }
         }
-        
-        function getDefaultProducts() {
-            return [
-                { id: 1, name: "Bird Nest 75ml (general)", price: 5, category: "bird nest drinks", stock: 100, description: "100% pure bird's nests, ready to drink", image: "https://i.postimg.cc/rw3v9gyK/75ml.png" },
-                { id: 2, name: "Bird Nest 75ml (6 bottles)", price: 30, category: "bird nest drinks", stock: 50, description: "100% pure bird's nests", image: "https://i.postimg.cc/Dw89sRhZ/75ml_6bottle.png" },
-                { id: 3, name: "Bird Nest Grade A (100g)", price: 290, category: "Dried bird nest", stock: 25, description: "Dried, shelf-life 3 years", image: "https://i.postimg.cc/Pq6bSyBf/Grade_A.png" },
-            ];
-        }
-        
-        function displayDefaultProducts() {
-            const products = getDefaultProducts();
-            const tbody = document.getElementById('productsBody');
-            tbody.innerHTML = products.map(product => `
-                <tr>
-                    <td>${product.id}</td>
-                    <td>📦</td>
-                    <td>${product.name}</td>
-                    <td>${product.category}</td>
-                    <td>$${product.price}</td>
-                    <td>${product.stock}</td>
-                    <td><span class="status status-paid">In Stock</span></td>
-                    <td><button class="btn btn-primary btn-sm" disabled>Edit</button></td>
-                </tr>
-            `).join('');
-        }
-        
-        function openProductModal(productId = null) {
-            editingProductId = productId;
+
+        function openAddProductModal() {
+            editingProductId = null;
+            document.getElementById('productModalTitle').textContent = 'Add New Product';
+            document.getElementById('productName').value = '';
+            document.getElementById('productCategory').value = 'bird nest drinks';
+            document.getElementById('productPrice').value = '';
+            document.getElementById('productStock').value = '0';
+            document.getElementById('productDescription').value = '';
+            document.getElementById('productImage').value = '';
             document.getElementById('productModal').style.display = 'flex';
-            
-            if (productId) {
-                document.getElementById('productModalTitle').textContent = 'Edit Product';
-                // Load product data
-                loadProductData(productId);
-            } else {
-                document.getElementById('productModalTitle').textContent = 'Add New Product';
-                document.getElementById('productName').value = '';
-                document.getElementById('productCategory').value = 'bird nest drinks';
-                document.getElementById('productPrice').value = '';
-                document.getElementById('productStock').value = '0';
-                document.getElementById('productDescription').value = '';
-                document.getElementById('productImage').value = '';
-            }
         }
-        
-        async function loadProductData(productId) {
-            const products = await window.loadProducts();
-            const product = products.find(p => p.id == productId);
-            if (product) {
-                document.getElementById('productName').value = product.name;
-                document.getElementById('productCategory').value = product.category;
-                document.getElementById('productPrice').value = product.price;
-                document.getElementById('productStock').value = product.stock || 0;
-                document.getElementById('productDescription').value = product.description || '';
-                document.getElementById('productImage').value = product.image || '';
-            }
+
+        async function editProduct(productId) {
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/products`);
+                const data = await response.json();
+                const products = data.success ? data.products : data;
+                const product = products.find(p => p.id == productId);
+                
+                if (product) {
+                    editingProductId = productId;
+                    document.getElementById('productModalTitle').textContent = 'Edit Product';
+                    document.getElementById('productName').value = product.name;
+                    document.getElementById('productCategory').value = product.category;
+                    document.getElementById('productPrice').value = product.price;
+                    document.getElementById('productStock').value = product.stock;
+                    document.getElementById('productDescription').value = product.description || '';
+                    document.getElementById('productImage').value = product.image || '';
+                    document.getElementById('productModal').style.display = 'flex';
+                }
+            } catch(e) { showNotification('Failed to load product', 'error'); }
         }
-        
+
         async function saveProduct() {
             const productData = {
-                id: editingProductId || Date.now(),
                 name: document.getElementById('productName').value,
                 category: document.getElementById('productCategory').value,
                 price: parseFloat(document.getElementById('productPrice').value),
@@ -628,32 +493,54 @@
                 image: document.getElementById('productImage').value
             };
             
-            if (window.saveProductToFirestore) {
-                await window.saveProductToFirestore(productData);
-                showNotification('Product saved successfully!');
-                closeProductModal();
-                loadProducts();
-            } else {
-                showNotification('Firestore not available. Product saved locally.', 'warning');
-                closeProductModal();
+            if (!productData.name || !productData.price) {
+                showNotification('Please fill in product name and price', 'error');
+                return;
             }
+            
+            try {
+                let url = `${BACKEND_URL}/api/products`;
+                let method = 'POST';
+                if (editingProductId) {
+                    url = `${BACKEND_URL}/api/products/${editingProductId}`;
+                    method = 'PUT';
+                }
+                
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(productData)
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification(editingProductId ? 'Product updated!' : 'Product added!');
+                    closeProductModal();
+                    loadProducts();
+                } else {
+                    showNotification('Failed to save product', 'error');
+                }
+            } catch(e) { showNotification('Error saving product', 'error'); }
         }
-        
+
         async function deleteProduct(productId) {
             if (confirm('Are you sure you want to delete this product?')) {
-                if (window.deleteProductFromFirestore) {
-                    await window.deleteProductFromFirestore(productId);
-                    showNotification('Product deleted!');
-                    loadProducts();
-                }
+                try {
+                    const response = await fetch(`${BACKEND_URL}/api/products/${productId}`, { method: 'DELETE' });
+                    const result = await response.json();
+                    if (result.success) {
+                        showNotification('Product deleted!');
+                        loadProducts();
+                    }
+                } catch(e) { showNotification('Failed to delete product', 'error'); }
             }
         }
-        
+
         function closeProductModal() {
             document.getElementById('productModal').style.display = 'none';
             editingProductId = null;
         }
-        
+
         // ==================== ANALYTICS ====================
         async function loadAnalytics() {
             try {
@@ -661,12 +548,42 @@
                 const orders = await response.json();
                 
                 const totalRevenue = orders.reduce((sum, o) => sum + (o.total || 0), 0);
-                const avgOrderValue = orders.length > 0 ? totalRevenue / orders.length : 0;
+                const totalOrders = orders.length;
+                const avgOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0;
                 
-                document.getElementById('totalRevenue').textContent = `$${totalRevenue.toFixed(2)}`;
-                document.getElementById('avgOrderValue').textContent = `$${avgOrderValue.toFixed(2)}`;
+                document.getElementById('analyticsRevenue').textContent = `$${totalRevenue.toFixed(2)}`;
+                document.getElementById('analyticsOrders').textContent = totalOrders;
+                document.getElementById('analyticsAvgOrder').textContent = `$${avgOrder.toFixed(2)}`;
                 
-                // Find top product
+                // Status distribution
+                const pending = orders.filter(o => o.status && o.status.includes('Pending')).length;
+                const paid = orders.filter(o => o.status === 'Paid').length;
+                const ready = orders.filter(o => o.status === 'Ready').length;
+                const completed = orders.filter(o => o.status === 'Completed').length;
+                const total = orders.length || 1;
+                
+                document.getElementById('pendingFill').style.width = `${(pending/total)*100}%`;
+                document.getElementById('pendingFill').textContent = `Pending ${Math.round((pending/total)*100)}%`;
+                document.getElementById('paidFill').style.width = `${(paid/total)*100}%`;
+                document.getElementById('paidFill').textContent = `Paid ${Math.round((paid/total)*100)}%`;
+                document.getElementById('readyFill').style.width = `${(ready/total)*100}%`;
+                document.getElementById('readyFill').textContent = `Ready ${Math.round((ready/total)*100)}%`;
+                document.getElementById('completedFill').style.width = `${(completed/total)*100}%`;
+                document.getElementById('completedFill').textContent = `Completed ${Math.round((completed/total)*100)}%`;
+                
+                // Payment methods
+                const khqr = orders.filter(o => o.paymentMethod && o.paymentMethod.toLowerCase().includes('khqr')).length;
+                const cod = orders.filter(o => o.paymentMethod === 'Cash on Delivery').length;
+                const card = orders.filter(o => o.paymentMethod === 'Card').length;
+                
+                document.getElementById('khqrFill').style.width = `${(khqr/total)*100}%`;
+                document.getElementById('khqrFill').textContent = `KHQR ${Math.round((khqr/total)*100)}%`;
+                document.getElementById('codFill').style.width = `${(cod/total)*100}%`;
+                document.getElementById('codFill').textContent = `COD ${Math.round((cod/total)*100)}%`;
+                document.getElementById('cardFill').style.width = `${(card/total)*100}%`;
+                document.getElementById('cardFill').textContent = `Card ${Math.round((card/total)*100)}%`;
+                
+                // Top products
                 const productSales = {};
                 orders.forEach(order => {
                     if (order.items) {
@@ -675,58 +592,70 @@
                         });
                     }
                 });
-                const topProduct = Object.entries(productSales).sort((a,b) => b[1] - a[1])[0];
-                if (topProduct) {
-                    document.getElementById('topProduct').innerHTML = `${topProduct[0]}<br><small>${topProduct[1]} sold</small>`;
-                } else {
-                    document.getElementById('topProduct').innerHTML = 'No sales yet';
-                }
+                const topProducts = Object.entries(productSales).sort((a,b) => b[1] - a[1]).slice(0, 5);
+                
+                const topProductsHtml = topProducts.length > 0 ? 
+                    `<ul class="top-product-list">
+                        ${topProducts.map((p, i) => `
+                            <li>
+                                <span class="product-rank">#${i+1}</span>
+                                <span class="product-name">${escapeHtml(p[0])}</span>
+                                <span class="product-sales">${p[1]} sold</span>
+                            </li>
+                        `).join('')}
+                    </ul>` : '<div style="text-align:center;color:#999;padding:20px;">No sales yet</div>';
+                document.getElementById('topProductsList').innerHTML = topProductsHtml;
+                
+                // Recent activity
+                const recentOrders = [...orders].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 10);
+                const activityHtml = recentOrders.length > 0 ?
+                    recentOrders.map(order => `
+                        <div style="padding: 10px; border-bottom: 1px solid #eee;">
+                            <strong>${escapeHtml(order.user_name)}</strong> placed order <code>${order.orderId}</code><br>
+                            <small style="color:#888;">$${order.total} - ${order.status}</small>
+                            <small style="color:#999; display:block;">${new Date(order.timestamp).toLocaleString()}</small>
+                        </div>
+                    `).join('') : '<div style="text-align:center;color:#999;padding:20px;">No recent activity</div>';
+                document.getElementById('recentActivity').innerHTML = activityHtml;
+                
             } catch(e) {
                 console.error('Failed to load analytics:', e);
             }
         }
-        
-        // ==================== CHAT FUNCTIONS ====================
+
+        // ==================== CHAT ====================
         async function openChat(orderId, customerName) {
             if (chatRefreshInterval) clearInterval(chatRefreshInterval);
-            
             currentOrderId = orderId;
             const chatBox = document.getElementById('chatBox');
-            const chatHeader = document.querySelector('#chatBox .chat-header span:first-child');
-            chatHeader.innerHTML = `💬 Chat with ${escapeHtml(customerName)}`;
             chatBox.style.display = 'flex';
-            
+            document.querySelector('#chatBox .chat-header span:first-child').innerHTML = `💬 Chat with ${escapeHtml(customerName)}`;
             await loadChatMessages(orderId);
             chatRefreshInterval = setInterval(() => loadChatMessages(orderId), 5000);
         }
-        
+
         async function loadChatMessages(orderId) {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/chat/messages/${orderId}`);
                 const data = await response.json();
-                
                 const messagesDiv = document.getElementById('chatMessages');
-                if (data.success && data.messages) {
-                    if (data.messages.length === 0) {
-                        messagesDiv.innerHTML = '<div style="text-align:center;color:#999;padding:20px;">No messages yet. Start the conversation!</div>';
-                    } else {
-                        messagesDiv.innerHTML = data.messages.map(msg => `
-                            <div class="message-bubble ${msg.sender === 'customer' ? 'customer' : 'seller'}">
-                                <div class="message-content">
-                                    <strong>${msg.sender === 'customer' ? '👤 Customer' : '🛒 You'}:</strong><br>
-                                    ${escapeHtml(msg.message)}
-                                </div>
-                                <div class="message-time">${new Date(msg.timestamp).toLocaleString()}</div>
+                if (data.success && data.messages && data.messages.length > 0) {
+                    messagesDiv.innerHTML = data.messages.map(msg => `
+                        <div class="message-bubble ${msg.sender === 'customer' ? 'customer' : 'seller'}">
+                            <div class="message-content">
+                                <strong>${msg.sender === 'customer' ? '👤 Customer' : '🛒 You'}:</strong><br>
+                                ${escapeHtml(msg.message)}
                             </div>
-                        `).join('');
-                    }
-                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                            <div class="message-time">${new Date(msg.timestamp).toLocaleString()}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    messagesDiv.innerHTML = '<div style="text-align:center;color:#999;padding:20px;">No messages yet. Start the conversation!</div>';
                 }
-            } catch(e) {
-                console.error('Failed to load chat messages:', e);
-            }
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            } catch(e) { console.error('Failed to load chat:', e); }
         }
-        
+
         async function sendMessage() {
             const input = document.getElementById('chatInput');
             const message = input.value.trim();
@@ -738,17 +667,14 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ orderId: currentOrderId, message })
                 });
-                
                 if (response.ok) {
                     input.value = '';
                     await loadChatMessages(currentOrderId);
                     showNotification('Message sent!');
                 }
-            } catch(e) {
-                console.error('Send message error:', e);
-            }
+            } catch(e) { console.error(e); }
         }
-        
+
         async function sendLocation(orderId) {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/chat/seller-reply`, {
@@ -756,24 +682,17 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ orderId, sendLocation: true })
                 });
-                if (response.ok) {
-                    showNotification('📍 Store location sent to customer!');
-                }
-            } catch(e) {
-                console.error('Send location error:', e);
-            }
+                if (response.ok) showNotification('📍 Store location sent!');
+            } catch(e) { console.error(e); }
         }
-        
+
         function downloadInvoice(orderId) {
             window.open(`${BACKEND_URL}/api/invoice/${orderId}`, '_blank');
         }
         
         function closeChat() {
             document.getElementById('chatBox').style.display = 'none';
-            if (chatRefreshInterval) {
-                clearInterval(chatRefreshInterval);
-                chatRefreshInterval = null;
-            }
+            if (chatRefreshInterval) { clearInterval(chatRefreshInterval); chatRefreshInterval = null; }
             currentOrderId = null;
         }
         
@@ -781,8 +700,7 @@
             const toast = document.createElement('div');
             toast.className = 'toast';
             toast.textContent = message;
-            toast.style.background = type === 'success' ? '#28a745' : '#ffc107';
-            toast.style.color = type === 'success' ? 'white' : '#333';
+            toast.style.background = type === 'success' ? '#28a745' : '#dc3545';
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 3000);
         }
@@ -801,65 +719,6 @@
         // Initial load
         loadOrders();
         setInterval(loadOrders, 30000);
-    </script>
-    
-    <!-- Firebase Module for Inventory -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-        import {
-            getFirestore, collection, query, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc
-        } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-        
-        const firebaseConfig = {
-            apiKey: "AIzaSyDUox5I6RG7sFABAyX_tUXi4rhiX80MDTY",
-            authDomain: "birdnesttgminiapp.firebaseapp.com",
-            projectId: "birdnesttgminiapp",
-            storageBucket: "birdnesttgminiapp.firebasestorage.app",
-            messagingSenderId: "1000241241106",
-            appId: "1:1000241241106:web:d23c6df3a1723aba100ccb",
-            measurementId: "G-M7FE78B3EM"
-        };
-        
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        
-        window.loadProducts = async function() {
-            try {
-                const productsRef = collection(db, "products");
-                const snapshot = await getDocs(productsRef);
-                const products = [];
-                snapshot.forEach(doc => {
-                    products.push({ id: doc.id, ...doc.data() });
-                });
-                return products;
-            } catch(e) {
-                console.error("Failed to load products from Firebase:", e);
-                return [];
-            }
-        };
-        
-        window.saveProductToFirestore = async function(product) {
-            try {
-                const productRef = doc(db, "products", product.id.toString());
-                await setDoc(productRef, product);
-                return true;
-            } catch(e) {
-                console.error("Failed to save product:", e);
-                return false;
-            }
-        };
-        
-        window.deleteProductFromFirestore = async function(productId) {
-            try {
-                await deleteDoc(doc(db, "products", productId.toString()));
-                return true;
-            } catch(e) {
-                console.error("Failed to delete product:", e);
-                return false;
-            }
-        };
-        
-        console.log("Firebase inventory ready");
     </script>
 </body>
 </html>
