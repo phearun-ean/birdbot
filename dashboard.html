@@ -7,28 +7,50 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container { max-width: 1400px; margin: 0 auto; }
         .header { background: linear-gradient(135deg, #ff6b00 0%, #e65100 100%); color: white; padding: 20px; border-radius: 15px; margin-bottom: 20px; }
         .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
         .stat-card { background: white; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .stat-value { font-size: 2rem; font-weight: bold; color: #ff6b00; }
-        .orders-table { background: white; border-radius: 15px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        table { width: 100%; border-collapse: collapse; }
+        .orders-table { background: white; border-radius: 15px; overflow-x: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; min-width: 800px; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #f8f9fa; color: #333; }
+        th { background: #f8f9fa; color: #333; position: sticky; top: 0; }
         .status { padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; display: inline-block; }
         .status-pending { background: #ffc107; color: #333; }
         .status-paid { background: #28a745; color: white; }
         .status-ready { background: #17a2b8; color: white; }
-        .btn { padding: 6px 12px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+        .btn { padding: 6px 12px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85rem; margin: 2px; }
         .btn-primary { background: #ff6b00; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-info { background: #17a2b8; color: white; }
         .btn-danger { background: #dc3545; color: white; }
-        .chat-box { position: fixed; bottom: 20px; right: 20px; width: 350px; background: white; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; }
-        .chat-header { background: #ff6b00; color: white; padding: 12px; border-radius: 15px 15px 0 0; cursor: pointer; }
-        .chat-messages { height: 300px; overflow-y: auto; padding: 12px; }
-        .chat-input { display: flex; padding: 12px; border-top: 1px solid #eee; }
-        .chat-input input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 8px; margin-right: 8px; }
-        .refresh-btn { background: #ff6b00; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; }
+        .btn-warning { background: #ffc107; color: #333; }
+        .chat-box { position: fixed; bottom: 20px; right: 20px; width: 380px; height: 500px; background: white; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; flex-direction: column; z-index: 1000; }
+        .chat-header { background: #ff6b00; color: white; padding: 12px; border-radius: 15px 15px 0 0; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .chat-header span { cursor: pointer; font-size: 20px; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 12px; background: #fafafa; }
+        .chat-input { display: flex; padding: 12px; border-top: 1px solid #eee; background: white; border-radius: 0 0 15px 15px; }
+        .chat-input input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 8px; margin-right: 8px; font-size: 14px; }
+        .chat-input input:focus { outline: none; border-color: #ff6b00; }
+        .refresh-btn { background: #ff6b00; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin-bottom: 15px; font-size: 14px; }
+        .refresh-btn:hover { background: #e65100; }
+        .message-bubble { margin-bottom: 12px; }
+        .message-bubble.customer { text-align: left; }
+        .message-bubble.seller { text-align: right; }
+        .message-content { display: inline-block; padding: 8px 12px; border-radius: 12px; max-width: 80%; word-wrap: break-word; }
+        .message-bubble.customer .message-content { background: #e9ecef; color: #000; }
+        .message-bubble.seller .message-content { background: #ff6b00; color: #fff; }
+        .message-time { font-size: 0.7rem; color: #888; margin-top: 4px; }
+        .chat-badge { background: #ff6b00; color: white; border-radius: 10px; padding: 2px 8px; font-size: 11px; margin-left: 5px; }
+        .logout-btn { float: right; background: rgba(255,255,255,0.2); border: none; color: white; padding: 5px 15px; border-radius: 20px; cursor: pointer; }
+        .logout-btn:hover { background: rgba(255,255,255,0.3); }
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            .stats { grid-template-columns: repeat(2, 1fr); }
+            .btn { padding: 4px 8px; font-size: 0.75rem; }
+            .chat-box { width: 95%; right: 2.5%; left: 2.5%; bottom: 10px; height: 70vh; }
+        }
     </style>
 </head>
 <body>
@@ -36,6 +58,7 @@
         <div class="header">
             <h1>🐦 Bird Nest House Admin Dashboard</h1>
             <p>Manage orders, chat with customers, and track deliveries</p>
+            <button class="logout-btn" onclick="logout()">🚪 Logout</button>
         </div>
         
         <div class="stats" id="stats">
@@ -62,90 +85,186 @@
         <div class="orders-table">
             <table id="ordersTable">
                 <thead>
-                    <tr><th>Order ID</th><th>Customer</th><th>Total</th><th>Payment</th><th>Status</th><th>Actions</th></tr>
+                    <tr>
+                        <th>Order ID</th>
+                        <th>Customer</th>
+                        <th>Total</th>
+                        <th>Payment</th>
+                        <th>Status</th>
+                        <th>Chat</th>
+                        <th>Actions</th>
+                    </tr>
                 </thead>
                 <tbody id="ordersBody">
-                    <tr><td colspan="6" style="text-align:center;">Loading orders...</td></tr>
+                    <tr><td colspan="7" style="text-align:center;">Loading orders...</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
     
     <div class="chat-box" id="chatBox">
-        <div class="chat-header" onclick="toggleChat()">💬 Customer Chat</div>
-        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-header">
+            <span>💬 Customer Chat</span>
+            <span onclick="closeChat()">✕</span>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div style="text-align:center;color:#999;padding:20px;">Select a chat from orders</div>
+        </div>
         <div class="chat-input">
-            <input type="text" id="chatInput" placeholder="Type your message...">
+            <input type="text" id="chatInput" placeholder="Type your message..." onkeypress="if(event.key==='Enter') sendMessage()">
             <button onclick="sendMessage()" class="btn btn-primary">Send</button>
         </div>
     </div>
     
     <script>
+        // IMPORTANT: Replace this with your actual ADMIN_SECRET from .env
+        const ADMIN_SECRET = 'your_admin_secret_here';
+        
         let currentOrderId = null;
+        let chatRefreshInterval = null;
+        let allOrders = [];
         
         async function loadOrders() {
             try {
                 const response = await fetch('/api/orders');
                 const orders = await response.json();
+                allOrders = orders;
                 
+                // Update stats
                 document.getElementById('totalOrders').textContent = orders.length;
-                document.getElementById('pendingOrders').textContent = orders.filter(o => o.status.includes('Pending')).length;
+                document.getElementById('pendingOrders').textContent = orders.filter(o => o.status && o.status.includes('Pending')).length;
                 document.getElementById('paidOrders').textContent = orders.filter(o => o.status === 'Paid').length;
                 document.getElementById('readyOrders').textContent = orders.filter(o => o.status === 'Ready').length;
                 
                 const tbody = document.getElementById('ordersBody');
-                tbody.innerHTML = orders.map(order => `
-                    <tr>
-                        <td><code>${order.orderId}</code></td>
-                        <td>${order.user_name}</td>
-                        <td>$${order.total}</td>
-                        <td>${order.paymentMethod}</td>
-                        <td><span class="status status-${order.status.toLowerCase().includes('pending') ? 'pending' : order.status.toLowerCase()}">${order.status}</span></td>
-                        <td>
-                            <button class="btn btn-primary" onclick="openChat('${order.orderId}', '${order.user_name}')">💬 Chat</button>
-                            <button class="btn btn-primary" onclick="updateStatus('${order.orderId}', 'Paid')">✅ Paid</button>
-                            <button class="btn btn-primary" onclick="updateStatus('${order.orderId}', 'Ready')">📦 Ready</button>
-                            <button class="btn btn-primary" onclick="sendLocation('${order.orderId}')">📍 Location</button>
-                            <button class="btn btn-danger" onclick="downloadInvoice('${order.orderId}')">📄 Invoice</button>
-                        </td>
-                    </tr>
-                `).join('');
+                if (orders.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No orders yet</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = orders.map(order => {
+                    const chatCount = order.chat_messages_count || 0;
+                    const chatBadge = chatCount > 0 ? `<span class="chat-badge">${chatCount}</span>` : '';
+                    const statusClass = getStatusClass(order.status);
+                    
+                    return `
+                        <tr>
+                            <td><code>${escapeHtml(order.orderId)}</code></td>
+                            <td><strong>${escapeHtml(order.user_name || 'N/A')}</strong><br><small>${escapeHtml(order.user_id || '')}</small></td>
+                            <td>$${(order.total || 0).toFixed(2)}</td>
+                            <td>${escapeHtml(order.paymentMethod || 'N/A')}</td>
+                            <td><span class="status status-${statusClass}">${escapeHtml(order.status || 'Unknown')}</span></td>
+                            <td><button class="btn btn-info" onclick="openChat('${order.orderId}', '${escapeHtml(order.user_name)}')">💬 Chat ${chatBadge}</button></td>
+                            <td>
+                                <button class="btn btn-success" onclick="updateStatus('${order.orderId}', 'Paid')">✅ Paid</button>
+                                <button class="btn btn-primary" onclick="updateStatus('${order.orderId}', 'Ready')">📦 Ready</button>
+                                <button class="btn btn-warning" onclick="sendLocation('${order.orderId}')">📍 Location</button>
+                                <button class="btn btn-danger" onclick="downloadInvoice('${order.orderId}')">📄 Invoice</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
             } catch(e) {
                 console.error('Failed to load orders:', e);
+                document.getElementById('ordersBody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:red;">Failed to load orders. Please refresh the page.</td></tr>';
             }
         }
         
+        function getStatusClass(status) {
+            if (!status) return 'pending';
+            if (status.toLowerCase().includes('pending')) return 'pending';
+            if (status.toLowerCase() === 'paid') return 'paid';
+            if (status.toLowerCase() === 'ready') return 'ready';
+            return 'pending';
+        }
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
         async function updateStatus(orderId, status) {
-            const response = await fetch('/api/update-status', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({orderId, status})
-            });
-            if (response.ok) {
-                alert(`Order ${orderId} marked as ${status}`);
-                loadOrders();
+            try {
+                const response = await fetch('/api/update-status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ orderId, status })
+                });
+                if (response.ok) {
+                    showNotification(`Order ${orderId} marked as ${status}`);
+                    loadOrders();
+                    if (currentOrderId === orderId) {
+                        loadChatMessages(orderId);
+                    }
+                } else {
+                    alert('Failed to update status');
+                }
+            } catch(e) {
+                console.error('Update status error:', e);
+                alert('Error updating status');
             }
         }
         
         async function openChat(orderId, customerName) {
+            if (chatRefreshInterval) {
+                clearInterval(chatRefreshInterval);
+            }
+            
             currentOrderId = orderId;
-            document.getElementById('chatBox').style.display = 'block';
-            document.querySelector('.chat-header').innerHTML = `💬 Chat with ${customerName} (${orderId})`;
+            const chatBox = document.getElementById('chatBox');
+            const chatHeader = document.querySelector('#chatBox .chat-header span:first-child');
+            chatHeader.innerHTML = `💬 Chat with ${escapeHtml(customerName)}`;
+            chatBox.style.display = 'flex';
             
-            const response = await fetch(`/api/chat/sessions/${orderId}`);
-            const data = await response.json();
+            await loadChatMessages(orderId);
             
-            const messagesDiv = document.getElementById('chatMessages');
-            if (data.success && data.messages) {
-                messagesDiv.innerHTML = data.messages.map(msg => `
-                    <div style="margin-bottom: 10px; text-align: ${msg.sender === 'buyer' ? 'left' : 'right'}">
-                        <strong>${msg.sender === 'buyer' ? '👤 Customer' : '🛒 You'}:</strong><br>
-                        <span style="background: ${msg.sender === 'buyer' ? '#e9ecef' : '#ff6b00'}; color: ${msg.sender === 'buyer' ? '#000' : '#fff'}; padding: 8px 12px; border-radius: 12px; display: inline-block; max-width: 80%;">
-                            ${msg.message}
-                        </span>
-                        <div style="font-size: 0.7rem; color: #888;">${new Date(msg.timestamp).toLocaleTimeString()}</div>
-                    </div>
-                `).join('');
+            // Auto-refresh chat every 3 seconds
+            chatRefreshInterval = setInterval(() => {
+                if (currentOrderId === orderId) {
+                    loadChatMessages(orderId);
+                }
+            }, 3000);
+        }
+        
+        async function loadChatMessages(orderId) {
+            try {
+                const response = await fetch(`/api/chat/messages/${orderId}`, {
+                    headers: { 'X-App-Secret': ADMIN_SECRET }
+                });
+                const data = await response.json();
+                
+                const messagesDiv = document.getElementById('chatMessages');
+                if (data.success && data.messages) {
+                    if (data.messages.length === 0) {
+                        messagesDiv.innerHTML = '<div style="text-align:center;color:#999;padding:20px;">No messages yet. Start the conversation!</div>';
+                    } else {
+                        messagesDiv.innerHTML = data.messages.map(msg => `
+                            <div class="message-bubble ${msg.sender === 'customer' ? 'customer' : 'seller'}">
+                                <div class="message-content">
+                                    <strong>${msg.sender === 'customer' ? '👤 Customer' : '🛒 You'}:</strong><br>
+                                    ${escapeHtml(msg.message)}
+                                </div>
+                                <div class="message-time">${new Date(msg.timestamp).toLocaleString()}</div>
+                            </div>
+                        `).join('');
+                    }
+                    // Scroll to bottom
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                }
+                
+                // Update chat badge count
+                const chatCount = data.messages ? data.messages.length : 0;
+                const orderRow = document.querySelector(`tr:has(code:contains("${orderId}"))`);
+                if (orderRow) {
+                    const chatCell = orderRow.cells[5];
+                    if (chatCell) {
+                        chatCell.innerHTML = `<button class="btn btn-info" onclick="openChat('${orderId}', '')">💬 Chat ${chatCount > 0 ? `<span class="chat-badge">${chatCount}</span>` : ''}</button>`;
+                    }
+                }
+            } catch(e) {
+                console.error('Failed to load chat messages:', e);
             }
         }
         
@@ -154,38 +273,88 @@
             const message = input.value.trim();
             if (!message || !currentOrderId) return;
             
-            const response = await fetch('/api/chat/seller-reply', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-App-Secret': '${ADMIN_SECRET}'},
-                body: JSON.stringify({orderId: currentOrderId, message})
-            });
-            
-            if (response.ok) {
-                input.value = '';
-                openChat(currentOrderId, '');
+            try {
+                const response = await fetch('/api/chat/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-App-Secret': ADMIN_SECRET
+                    },
+                    body: JSON.stringify({ orderId: currentOrderId, message })
+                });
+                
+                if (response.ok) {
+                    input.value = '';
+                    await loadChatMessages(currentOrderId);
+                    showNotification('Message sent!');
+                } else {
+                    alert('Failed to send message');
+                }
+            } catch(e) {
+                console.error('Send message error:', e);
+                alert('Error sending message');
             }
         }
         
         async function sendLocation(orderId) {
-            const response = await fetch('/api/chat/seller-reply', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-App-Secret': '${ADMIN_SECRET}'},
-                body: JSON.stringify({orderId, sendLocation: true})
-            });
-            if (response.ok) alert('Location sent to customer!');
+            try {
+                const response = await fetch('/api/chat/seller-reply', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-App-Secret': ADMIN_SECRET
+                    },
+                    body: JSON.stringify({ orderId, sendLocation: true })
+                });
+                if (response.ok) {
+                    showNotification('📍 Store location sent to customer!');
+                    if (currentOrderId === orderId) {
+                        loadChatMessages(orderId);
+                    }
+                } else {
+                    alert('Failed to send location');
+                }
+            } catch(e) {
+                console.error('Send location error:', e);
+                alert('Error sending location');
+            }
         }
         
         function downloadInvoice(orderId) {
             window.open(`/api/invoice/${orderId}`, '_blank');
         }
         
-        function toggleChat() {
-            const box = document.getElementById('chatBox');
-            box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        function closeChat() {
+            document.getElementById('chatBox').style.display = 'none';
+            if (chatRefreshInterval) {
+                clearInterval(chatRefreshInterval);
+                chatRefreshInterval = null;
+            }
+            currentOrderId = null;
         }
         
+        function showNotification(message) {
+            // Simple toast notification
+            const toast = document.createElement('div');
+            toast.style.cssText = 'position:fixed;bottom:100px;right:20px;background:#28a745;color:white;padding:10px 20px;border-radius:10px;z-index:2000;animation:fadeOut 2s forwards';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
+        
+        function logout() {
+            window.location.href = '/dashboard';
+        }
+        
+        // Add animation style
+        const style = document.createElement('style');
+        style.textContent = '@keyframes fadeOut {0%{opacity:1}70%{opacity:1}100%{opacity:0;display:none}}';
+        document.head.appendChild(style);
+        
+        // Initial load
         loadOrders();
-        setInterval(loadOrders, 30000);
+        // Refresh orders every 10 seconds
+        setInterval(loadOrders, 10000);
     </script>
 </body>
 </html>
